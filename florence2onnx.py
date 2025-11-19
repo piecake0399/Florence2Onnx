@@ -7,7 +7,15 @@ from PIL import Image
 import onnxruntime as ort
 from transformers import AutoProcessor
 
+from datasets import load_dataset
+import json
+import numpy as np
 
+import psutil
+
+
+so = ort.SessionOptions()
+so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
 # WEIGHT FILES CAN BE DOWNLOADED FROM HERE: https://huggingface.co/onnx-community/Florence-2-base-ft/tree/main/onnx
 class Florence2OnnxModel:
     def __init__(
@@ -29,22 +37,27 @@ class Florence2OnnxModel:
         self.vision_encoder = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/vision_encoder_q4f16.onnx"),
             providers=providers,
+            sess_options=so
         )
         self.text_embed = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/embed_tokens_q4f16.onnx"),
             providers=providers,
+            sess_options=so
         )
         self.encoder = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/encoder_model_q4f16.onnx"),
             providers=providers,
+            sess_options=so
         )
         self.decoder_prefill = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/decoder_model_q4f16.onnx"),
             providers=providers,
+            sess_options=so
         )
         self.decoder_decode = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/decoder_model_merged_q4.onnx"),
             providers=providers,
+            sess_options=so
         )
 
         self.processor = AutoProcessor.from_pretrained(processor_dir, trust_remote_code=True)
@@ -175,6 +188,19 @@ class Florence2OnnxModel:
         )
         return parsed_answer, total_time
 
+    def generate_phrase_grounding(
+        self, 
+        image_path: str, 
+        query: str
+    ):
+        prompt = f"<PHRASE_GROUNDING> {query}"
+        parsed_answer, infer_time = self.generate_caption(
+            image_path=image_path,
+            prompt=prompt,
+            max_new_tokens=256
+        )
+        return parsed_answer, infer_time
+
     def infer_from_image(
         self,
         image_path: str,
@@ -186,10 +212,104 @@ class Florence2OnnxModel:
         print(f"Inference Time: {inference_time:.4f} seconds")
         print("Answer:", parsed_answer)
 
+def bbox_iou(boxA, boxB):
+    # box format: [x, y, w, h]
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
+    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
+
+    interW = max(0, xB - xA)
+    interH = max(0, yB - yA)
+    interArea = interW * interH
+
+    boxA_area = boxA[2] * boxA[3]
+    boxB_area = boxB[2] * boxB[3]
+    union = boxA_area + boxB_area - interArea
+
+    return interArea / union if union > 0 else 0
+
+def benchmark_refcoco(model, coco_root, sample_size=200):
+    """
+    Benchmark Florence2 Phrase Grounding + đo CPU usage trung bình.
+    """
+
+    from datasets import load_dataset
+    ds = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
+
+    total = 0
+    avg_iou = 0.0
+    avg_time = 0.0
+
+    times = []
+    cpu_records = []
+
+    # Reset CPU measurement
+    psutil.cpu_percent(interval=None)
+
+    for idx, item in enumerate(ds):
+        if idx >= sample_size:
+            break
+
+        img_path = os.path.join(coco_root, item["image"])
+        query = item["query"]
+        gt_bbox = item["bbox"]  # x,y,w,h
+
+        # đo CPU usage ngay trước khi inference (snapshot 1)
+        cpu_before = psutil.cpu_percent(interval=None)
+
+        # --- Inference ---
+        result, t = model.generate_phrase_grounding(img_path, query)
+
+        # đo CPU usage ngay sau khi inference (snapshot 2)
+        cpu_after = psutil.cpu_percent(interval=None)
+
+        # CPU usage của iteration này
+        cpu_iter = (cpu_before + cpu_after) / 2
+        cpu_records.append(cpu_iter)
+
+        times.append(t)
+
+        # === Lấy bbox AI ===
+        if "bboxes" in result:
+            pred = result["bboxes"][0]  # [x1,y1,x2,y2]
+            pred_bbox = [
+                pred[0],
+                pred[1],
+                pred[2] - pred[0],
+                pred[3] - pred[1]
+            ]
+        elif "polygons" in result:
+            poly = result["polygons"][0]
+            xs, ys = poly[::2], poly[1::2]
+            pred_bbox = [min(xs), min(ys), max(xs)-min(xs), max(ys)-min(ys)]
+        else:
+            continue
+
+        iou = bbox_iou(pred_bbox, gt_bbox)
+
+        total += 1
+        avg_iou += iou
+        avg_time += t
+
+        print(f"[{idx}] Query: {query}")
+        print(f"GT: {gt_bbox} | Pred: {pred_bbox}")
+        print(f"IoU = {iou:.3f}, Time = {t:.3f}s, CPU = {cpu_iter:.1f}%\n")
+
+    # === SUMMARY ===
+
+    print("\n==== BENCHMARK COMPLETE ====")
+    print(f"Total samples: {total}")
+    print(f"Avg IoU: {avg_iou / total:.4f}")
+    print(f"Avg time: {avg_time / total:.3f}s")
+    print(f"Fastest inference: {min(times):.3f}s")
+    print(f"Slowest inference: {max(times):.3f}s")
+    print(f"Avg CPU Usage: {sum(cpu_records) / len(cpu_records):.1f}%")
 
 if __name__ == '__main__':
     model = Florence2OnnxModel(
-        providers=["CUDAExecutionProvider"],
-        warmup_iterations=10
+        providers=["CPUExecutionProvider"],
+        warmup_iterations=5
     )
-    model.infer_from_image("./car.jpg", prompt="<MORE_DETAILED_CAPTION>", max_new_tokens=1024)
+    COCO_IMG_ROOT = "coco/val2014"
+    benchmark_refcoco(model, COCO_IMG_ROOT, sample_size=200)
