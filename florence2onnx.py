@@ -247,129 +247,113 @@ def bbox_iou(boxA, boxB):
 
     return interArea / union if union > 0 else 0
 
-def benchmark_refcoco(model, coco_root, sample_size=200):
+def benchmark_refcoco(model, dataset, sample_size=None):
     """
-    Benchmark Florence2 Phrase Grounding + đo CPU usage trung bình.
-    """
+    Benchmark Florence2 Phrase Grounding theo chuẩn evaluate_dataset().
 
-    ds = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
+    model: Florence2OnnxModel
+    dataset: HF dataset "jxu124/refcoco-benchmark", split=refcoco_unc_val
+    sample_size: benchmark số câu (không phải số ảnh!)
+    """
 
     total = 0
-    avg_iou = 0.0
-    avg_time = 0.0
+    correct = 0
+    processed_samples = 0
 
     times = []
     cpu_records = []
 
-    proc = psutil.Process(os.getpid())
+    psutil.cpu_percent(interval=None)  # reset CPU meter
 
-    for idx, item in enumerate(ds):
-        if idx >= sample_size:
-            break
+    for idx, sample in enumerate(dataset):
+        img = sample["image"].convert("RGB")
+        ref_list = sample["ref_list"]
 
-        # Dataset may provide either a PIL.Image under "image", or provide "image_id"/"image" path
-        # Prefer using dataset's image if available (it's a PIL.Image)
-        if isinstance(item.get("image"), Image.Image):
-            image_obj = item["image"]
-        else:
-            # try to construct path from "image" (string) or "image_id"
-            if isinstance(item.get("image"), str):
-                image_path = os.path.join(coco_root, item["image"])
-            elif "image_id" in item:
-                image_path = os.path.join(coco_root, f"COCO_val2014_{int(item['image_id']):012d}.jpg")
-            else:
-                raise RuntimeError("Cannot determine image path from dataset item")
-            image_obj = Image.open(image_path).convert("RGB")
+        for ref_info in ref_list:
 
-        query = item.get("query") or item.get("phrase") or item.get("expression") or item.get("caption")
-        if query is None:
-            # fallback to a default prompt
-            query = "<PHRASE_GROUNDING>"
+            # --- GT BBOX ---
+            ann = ref_info["ann_info"]
+            gt_bbox = ann["bbox"]  # COCO format [x,y,w,h]
+            x, y, w, h = gt_bbox
+            gt = [x, y, x + w, y + h]  # convert thành [x1,y1,x2,y2]
 
-        gt_bbox = item.get("bbox")
-        if gt_bbox is None:
-            # If dataset uses different field for bbox, try alternatives
-            gt_bbox = item.get("box") or item.get("ground_truth_bbox")
-        if gt_bbox is None:
-            # skip if no GT bbox
-            print(f"[{idx}] skip sample (no GT bbox)")
-            continue
+            # --- Iterate all sentences for this object ---
+            sentences = ref_info["ref_info"]["sentences"]
 
-        # Measure CPU time of THIS process before/after inference
-        cpu_before = proc.cpu_times().user + proc.cpu_times().system
-        wall_before = time.time()
+            for sent_info in sentences:
+                expr = sent_info["sent"]
 
-        # --- Inference ---
-        result, t = model.generate_phrase_grounding(image_obj, query)
+                # Giới hạn số sample theo số câu
+                if sample_size is not None and processed_samples >= sample_size:
+                    acc = correct / total if total > 0 else 0
+                    print("=== BENCHMARK FINISHED ===")
+                    print(f"Accuracy: {acc:.4f}")
+                    print(f"Correct: {correct}, Total: {total}")
+                    print(f"Avg time: {np.mean(times):.3f}s")
+                    print(f"Fastest: {np.min(times):.3f}s")
+                    print(f"Slowest: {np.max(times):.3f}s")
+                    print(f"Avg CPU Usage: {np.mean(cpu_records):.1f}%")
+                    return
 
-        wall_after = time.time()
-        cpu_after = proc.cpu_times().user + proc.cpu_times().system
+                # --- CPU snapshot trước ---
+                cpu_before = psutil.cpu_percent(interval=None)
 
-        elapsed_wall = wall_after - wall_before
-        cpu_time_delta = cpu_after - cpu_before
+                # --- Run model ---
+                pred_result, t = model.generate_phrase_grounding(img, expr)
 
-        # CPU percent relative to all CPUs (system-wide %) approximated:
-        cpu_iter = 0.0
-        try:
-            cpu_iter = (cpu_time_delta / (elapsed_wall + 1e-12)) * 100.0 / max(1, psutil.cpu_count(logical=True))
-        except Exception:
-            cpu_iter = 0.0
+                # --- CPU snapshot sau ---
+                cpu_after = psutil.cpu_percent(interval=None)
+                cpu_records.append((cpu_before + cpu_after) / 2)
 
-        cpu_records.append(cpu_iter)
-        times.append(t)
+                times.append(t)
 
-        # === Lấy bbox AI ===
-        pred_bbox = None
-        # If model output is dict-like and contains bbox/polygon
-        if isinstance(result, dict):
-            if "bboxes" in result and len(result["bboxes"]) > 0:
-                pred = result["bboxes"][0]
-                # if format [x1,y1,x2,y2] -> convert to [x,y,w,h]
-                if len(pred) >= 4:
-                    if pred[2] > pred[0] and pred[3] > pred[1]:
-                        pred_bbox = [float(pred[0]), float(pred[1]), float(pred[2]) - float(pred[0]), float(pred[3]) - float(pred[1])]
-                    else:
-                        pred_bbox = [float(pred[0]), float(pred[1]), float(pred[2]), float(pred[3])]
-            elif "polygons" in result and len(result["polygons"]) > 0:
-                poly = result["polygons"][0]
-                xs = poly[::2]
-                ys = poly[1::2]
-                minx, maxx = min(xs), max(xs)
-                miny, maxy = min(ys), max(ys)
-                pred_bbox = [minx, miny, maxx - minx, maxy - miny]
-        elif isinstance(result, str):
-            parsed = parse_bbox_from_string(result)
-            if parsed is not None:
-                pred_bbox = parsed
+                # --- Parse Florence2 output ---
+                if pred_result is None:
+                    total += 1
+                    processed_samples += 1
+                    continue
 
-        if pred_bbox is None:
-            print(f"[{idx}] Model returned no bbox — skipping sample")
-            continue
+                if "bboxes" in pred_result:
+                    x1, y1, x2, y2 = pred_result["bboxes"][0]
+                elif "polygons" in pred_result:
+                    poly = pred_result["polygons"][0]
+                    xs, ys = poly[::2], poly[1::2]
+                    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+                else:
+                    total += 1
+                    processed_samples += 1
+                    continue
 
-        # ensure gt bbox numeric list [x,y,w,h]
-        gt = [float(x) for x in gt_bbox]
+                pred = [x1, y1, x2, y2]
 
-        iou = bbox_iou(pred_bbox, gt)
+                # --- Compute IoU ---
+                iou = compute_iou(pred, gt)
+                if iou >= 0.5:
+                    correct += 1
 
-        total += 1
-        avg_iou += iou
-        avg_time += t
-
-        print(f"[{idx}] Query: {query}")
-        print(f"GT: {gt} | Pred: {pred_bbox}")
-        print(f"IoU = {iou:.3f}, Time = {t:.3f}s, CPU% = {cpu_iter:.1f}%\n")
+                total += 1
+                processed_samples += 1
 
     # === SUMMARY ===
-    print("\n==== BENCHMARK COMPLETE ====")
-    print(f"Total samples: {total}")
-    if total > 0:
-        print(f"Avg IoU: {avg_iou / total:.4f}")
-        print(f"Avg time: {avg_time / total:.3f}s")
-    if len(times) > 0:
-        print(f"Fastest inference: {min(times):.3f}s")
-        print(f"Slowest inference: {max(times):.3f}s")
-    if len(cpu_records) > 0:
-        print(f"Avg CPU Usage (this process): {sum(cpu_records) / len(cpu_records):.1f}%")
+    acc = correct / total if total > 0 else 0
+
+    print("\n=== BENCHMARK COMPLETE ===")
+    print(f"Accuracy: {acc:.4f}")
+    print(f"Correct: {correct} / {total}")
+    print(f"Avg inference time: {np.mean(times):.3f}s")
+    print(f"Fastest: {np.min(times):.3f}s")
+    print(f"Slowest: {np.max(times):.3f}s")
+    print(f"Avg CPU Usage: {np.mean(cpu_records):.1f}%")
+
+    return {
+        "accuracy": acc,
+        "correct": correct,
+        "total": total,
+        "avg_time": float(np.mean(times)),
+        "fastest": float(np.min(times)),
+        "slowest": float(np.max(times)),
+        "avg_cpu": float(np.mean(cpu_records)),
+    }
 
 if __name__ == '__main__':
     model = Florence2OnnxModel(
