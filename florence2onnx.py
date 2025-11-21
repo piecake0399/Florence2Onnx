@@ -247,113 +247,119 @@ def bbox_iou(boxA, boxB):
 
     return interArea / union if union > 0 else 0
 
-def benchmark_refcoco(model, dataset, sample_size=None):
-    """
-    Benchmark Florence2 Phrase Grounding theo chuẩn evaluate_dataset().
-
-    model: Florence2OnnxModel
-    dataset: HF dataset "jxu124/refcoco-benchmark", split=refcoco_unc_val
-    sample_size: benchmark số câu (không phải số ảnh!)
-    """
+def evaluate_refcoco(ds, coco_root, sample_size=100):
 
     total = 0
     correct = 0
-    processed_samples = 0
 
-    times = []
-    cpu_records = []
+    cpu_samples = []
+    process = psutil.Process()
 
-    psutil.cpu_percent(interval=None)  # reset CPU meter
+    inference_times = []
 
-    for idx, sample in enumerate(dataset):
-        img = sample["image"].convert("RGB")
-        ref_list = sample["ref_list"]
+    start_time = time.time()
 
-        for ref_info in ref_list:
+    for idx, item in enumerate(ds):
+        if idx >= sample_size:
+            break
 
-            # --- GT BBOX ---
-            ann = ref_info["ann_info"]
-            gt_bbox = ann["bbox"]  # COCO format [x,y,w,h]
+        # --- Load image ---
+        img = item.get("image")
+        if isinstance(img, Image.Image):
+            image_obj = img
+        else:
+            # trường hợp không phổ biến
+            if "image_info" in item:
+                file_name = item["image_info"]["file_name"]
+                image_path = os.path.join(coco_root, file_name)
+                image_obj = Image.open(image_path).convert("RGB")
+            else:
+                raise RuntimeError("Cannot determine image for sample")
+
+        # --- Iterate over ref_list (multiple GT) ---
+        ref_list = item.get("ref_list")
+        if ref_list is None:
+            print(f"[{idx}] skip sample (no ref_list)")
+            continue
+
+        for ref_idx, ref_item in enumerate(ref_list):
+
+            # Ground truth bbox location
+            ann_info = ref_item.get("ann_info", {})
+            gt_bbox = ann_info.get("bbox")
+
+            if gt_bbox is None:
+                print(f"[{idx}] skip ref {ref_idx} (no GT bbox)")
+                continue
+
             x, y, w, h = gt_bbox
-            gt = [x, y, x + w, y + h]  # convert thành [x1,y1,x2,y2]
+            gt_xyxy = [x, y, x + w, y + h]
 
-            # --- Iterate all sentences for this object ---
-            sentences = ref_info["ref_info"]["sentences"]
+            # Grounding sentences
+            sentences = ref_item.get("ref_info", {}).get("sentences", [])
+            if not sentences:
+                print(f"[{idx}] skip ref {ref_idx} (no sentences)")
+                continue
 
-            for sent_info in sentences:
-                expr = sent_info["sent"]
-
-                # Giới hạn số sample theo số câu
-                if sample_size is not None and processed_samples >= sample_size:
-                    acc = correct / total if total > 0 else 0
-                    print("=== BENCHMARK FINISHED ===")
-                    print(f"Accuracy: {acc:.4f}")
-                    print(f"Correct: {correct}, Total: {total}")
-                    print(f"Avg time: {np.mean(times):.3f}s")
-                    print(f"Fastest: {np.min(times):.3f}s")
-                    print(f"Slowest: {np.max(times):.3f}s")
-                    print(f"Avg CPU Usage: {np.mean(cpu_records):.1f}%")
-                    return
-
-                # --- CPU snapshot trước ---
-                cpu_before = psutil.cpu_percent(interval=None)
-
-                # --- Run model ---
-                pred_result, t = model.generate_phrase_grounding(img, expr)
-
-                # --- CPU snapshot sau ---
-                cpu_after = psutil.cpu_percent(interval=None)
-                cpu_records.append((cpu_before + cpu_after) / 2)
-
-                times.append(t)
-
-                # --- Parse Florence2 output ---
-                if pred_result is None:
-                    total += 1
-                    processed_samples += 1
+            for s in sentences:
+                query = s.get("sent")
+                if not query:
+                    print(f"[{idx}] skip sentence (no query)")
                     continue
 
-                if "bboxes" in pred_result:
-                    x1, y1, x2, y2 = pred_result["bboxes"][0]
-                elif "polygons" in pred_result:
-                    poly = pred_result["polygons"][0]
-                    xs, ys = poly[::2], poly[1::2]
-                    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
-                else:
-                    total += 1
-                    processed_samples += 1
-                    continue
+                # === RECORD CPU USAGE BEFORE INFERENCE ===
+                cpu_percent = process.cpu_percent(interval=None)
+                t0 = time.time()
+                # --- RUN FLORENCE2 ---
+                pred_bbox = inference_grounding_florence2(image_obj, query)
 
-                pred = [x1, y1, x2, y2]
+                t1 = time.time()
+                infer_time = t1 - t0
+                inference_timess.append(infer_time)
 
-                # --- Compute IoU ---
-                iou = compute_iou(pred, gt)
-                if iou >= 0.5:
-                    correct += 1
+                # === RECORD CPU USAGE AFTER INFERENCE ===
+                cpu_percent = process.cpu_percent(interval=None)
+                cpu_samples.append(cpu_percent)
 
                 total += 1
-                processed_samples += 1
 
-    # === SUMMARY ===
-    acc = correct / total if total > 0 else 0
+                if pred_bbox is None:
+                    print(f"[{idx}] no prediction for query: {query}")
+                    continue
 
-    print("\n=== BENCHMARK COMPLETE ===")
-    print(f"Accuracy: {acc:.4f}")
-    print(f"Correct: {correct} / {total}")
-    print(f"Avg inference time: {np.mean(times):.3f}s")
-    print(f"Fastest: {np.min(times):.3f}s")
-    print(f"Slowest: {np.max(times):.3f}s")
-    print(f"Avg CPU Usage: {np.mean(cpu_records):.1f}%")
+                iou = bbox_iou(pred_bbox, gt_xyxy)
+                if iou >= 0.5:
+                    correct +=1
 
-    return {
-        "accuracy": acc,
-        "correct": correct,
-        "total": total,
-        "avg_time": float(np.mean(times)),
-        "fastest": float(np.min(times)),
-        "slowest": float(np.max(times)),
-        "avg_cpu": float(np.mean(cpu_records)),
-    }
+                # =====SUMMARY=====
+                end_time = time.end()
+                elapsed = end_time - start_time
+                acc = correct / total if total > 0 else 0.0
+                avg_cpu = sum(cpu_samples) / len(cpu_samples) if cpu_samples > 0 else 0.0
+                min_infer = min(inference_times) if inference_times else None
+                max_infer = max(inference_times) if inference_times else None
+                avg_infer = sum(inference_times) / len(inference_times) if inference_times else None
+
+                print("\n=== COMPLETE ===")
+                print(f"Accuracy: {acc:.4f}")
+                print(f"Correct: {correct} / {total}")
+                print(f"Avg inference time: {avg_infer:.3f}s")
+                print(f"Fastest: {min_infer:.3f}s")
+                print(f"Slowest: {max_infer:.3f}s")
+                print(f"Avg CPU Usage: {avg_cpu:.1f}%")
+
+                return {
+                    "accuracy": acc,
+                    "correct": correct,
+                    "total": total,
+                    "avg_cpu": avg_cpu,
+                    "time_sec": elapsed,
+                    "min_infer_sec": min_infer,
+                    "max_infer_sec": max_infer,
+                    "avg_infer_sec": avg_infer,
+                    }
+
+    print("Done evaluating.")
 
 if __name__ == '__main__':
     model = Florence2OnnxModel(
@@ -361,4 +367,4 @@ if __name__ == '__main__':
         warmup_iterations=5
     )
     COCO_IMG_ROOT = "coco/val2014"
-    benchmark_refcoco(model, COCO_IMG_ROOT, sample_size=200)
+    evaluate_refcoco(model, COCO_IMG_ROOT, sample_size=200)
