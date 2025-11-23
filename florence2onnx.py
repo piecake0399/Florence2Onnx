@@ -8,14 +8,9 @@ import onnxruntime as ort
 from transformers import AutoProcessor
 
 from datasets import load_dataset
-import json
-import numpy as np
-
-import psutil
+from tqdm import tqdm
 
 
-so = ort.SessionOptions()
-so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
 # WEIGHT FILES CAN BE DOWNLOADED FROM HERE: https://huggingface.co/onnx-community/Florence-2-base-ft/tree/main/onnx
 class Florence2OnnxModel:
     def __init__(
@@ -30,49 +25,34 @@ class Florence2OnnxModel:
 
         processor_dir: str = os.path.join(onnx_dir, "processor_files")
 
+
         if providers is None:
             providers = ["CPUExecutionProvider"]
 
         self.vision_encoder = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/vision_encoder_q4f16.onnx"),
             providers=providers,
-            sess_options=so
         )
         self.text_embed = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/embed_tokens_q4f16.onnx"),
             providers=providers,
-            sess_options=so
         )
         self.encoder = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/encoder_model_q4f16.onnx"),
             providers=providers,
-            sess_options=so
         )
         self.decoder_prefill = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/decoder_model_q4f16.onnx"),
             providers=providers,
-            sess_options=so
         )
         self.decoder_decode = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/decoder_model_merged_q4.onnx"),
             providers=providers,
-            sess_options=so
         )
 
         self.processor = AutoProcessor.from_pretrained(processor_dir, trust_remote_code=True)
 
         self._warmup(iterations=warmup_iterations)
-
-    def _open_image(self, image_input):
-        """
-        Accept either a PIL.Image or a path string. Return PIL.Image.
-        """
-        if isinstance(image_input, Image.Image):
-            return image_input
-        elif isinstance(image_input, str):
-            return Image.open(image_input).convert("RGB")
-        else:
-            raise ValueError("image_input must be PIL.Image or path string")
 
     def _warmup(self, iterations: int = 10) -> None:
         dummy_image = Image.new("RGB", (384, 384))
@@ -89,15 +69,13 @@ class Florence2OnnxModel:
 
     def generate_caption(
         self,
-        image_input,
+        image_path: str,
         prompt: str = "<MORE_DETAILED_CAPTION>",
         max_new_tokens: int = 1024
-    ) -> (object, float):
-        """
-        image_input: PIL.Image or path string
-        Returns: parsed_answer (could be dict or string) and elapsed_time
-        """
-        image = self._open_image(image_input)
+    ) -> (str, float):
+
+
+        image = Image.open(image_path)
         inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
 
         start_time = time.time()
@@ -161,7 +139,6 @@ class Florence2OnnxModel:
                     "inputs_embeds": next_input_embeds,
                     "encoder_hidden_states": encoder_hidden_states,
                     "encoder_attention_mask": attention_mask,
-                    # NOTE: giữ nguyên mapping past_key_values như file ONNX của bạn
                     "past_key_values.0.decoder.key": decoder_kv[0],
                     "past_key_values.0.decoder.value": decoder_kv[1],
                     "past_key_values.0.encoder.key": encoder_kv[2],
@@ -196,175 +173,90 @@ class Florence2OnnxModel:
             [generated_tokens], skip_special_tokens=False
         )[0]
 
-        # post_process_generation có thể trả về dict hoặc string tuỳ task
-        try:
-            parsed_answer = self.processor.post_process_generation(
-                generated_text, task=prompt, image_size=(image.width, image.height)
-            )
-        except Exception:
-            parsed_answer = generated_text
-
-        return parsed_answer, total_time
-
-    def generate_phrase_grounding(
-        self,
-        image_input,
-        query: str
-    ):
-        prompt = f"<PHRASE_GROUNDING> {query}"
-        parsed_answer, infer_time = self.generate_caption(
-            image_input,
-            prompt=prompt,
-            max_new_tokens=256
+        parsed_answer = self.processor.post_process_generation(
+            generated_text, task=prompt, image_size=(image.width, image.height)
         )
-        return parsed_answer, infer_time
+        return parsed_answer, total_time
 
     def infer_from_image(
         self,
-        image_input,
+        image_path: str,
         prompt: str = "<MORE_DETAILED_CAPTION>",
         max_new_tokens: int = 1024
     ) -> None:
 
-        parsed_answer, inference_time = self.generate_caption(image_input, prompt, max_new_tokens)
+        parsed_answer, inference_time = self.generate_caption(image_path, prompt, max_new_tokens)
         print(f"Inference Time: {inference_time:.4f} seconds")
         print("Answer:", parsed_answer)
 
-def bbox_iou(boxA, boxB):
-    # box format: [x, y, w, h]
+
+def compute_iou(boxA, boxB):
     xA = max(boxA[0], boxB[0])
     yA = max(boxA[1], boxB[1])
-    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
-    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
-
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
     interW = max(0, xB - xA)
     interH = max(0, yB - yA)
     interArea = interW * interH
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    union = boxAArea + boxBArea - interArea
+    return interArea / union if union > 0 else 0.0
 
-    boxA_area = boxA[2] * boxA[3]
-    boxB_area = boxB[2] * boxB[3]
-    union = boxA_area + boxB_area - interArea
-
-    return interArea / union if union > 0 else 0
-
-def evaluate_refcoco(ds, coco_root, sample_size=100):
-
+def evaluate_dataset(model, dataset, img_root, n_samples=None):
+    """
+    dataset: HF dataset with fields: image_id, ann(bbox), ref_list
+    img_root: đường dẫn chứa ảnh (not used in this version)
+    n_samples: nếu None dùng toàn bộ, nếu int dùng subset đầu
+    """
     total = 0
     correct = 0
+    processed_samples = 0  # Counter for processed samples
 
-    cpu_samples = []
-    process = psutil.Process()
-
-    inference_times = []
-
-    start_time = time.time()
-
-    for idx, item in enumerate(ds):
-        if idx >= sample_size:
+    for i, sample in enumerate(tqdm(dataset)):
+        if (n_samples is not None) and (processed_samples >= n_samples):
             break
 
-        # --- Load image ---
-        img = item.get("image")
-        if isinstance(img, Image.Image):
-            image_obj = img
-        else:
-            # trường hợp không phổ biến
-            if "image_info" in item:
-                file_name = item["image_info"]["file_name"]
-                image_path = os.path.join(coco_root, file_name)
-                image_obj = Image.open(image_path).convert("RGB")
-            else:
-                raise RuntimeError("Cannot determine image for sample")
+        img = sample["image"].convert("RGB")
+        ref_list = sample["ref_list"]
 
-        # --- Iterate over ref_list (multiple GT) ---
-        ref_list = item.get("ref_list")
-        if ref_list is None:
-            print(f"[{idx}] skip sample (no ref_list)")
-            continue
-
-        for ref_idx, ref_item in enumerate(ref_list):
-
-            # Ground truth bbox location
-            ann_info = ref_item.get("ann_info", {})
-            gt_bbox = ann_info.get("bbox")
-
-            if gt_bbox is None:
-                print(f"[{idx}] skip ref {ref_idx} (no GT bbox)")
-                continue
-
+        for ref_info in ref_list:
+            ann_info = ref_info["ann_info"]
+            gt_bbox = ann_info["bbox"]  # COCO format: [x, y, w, h]
+            # convert to [x1, y1, x2, y2]
             x, y, w, h = gt_bbox
-            gt_xyxy = [x, y, x + w, y + h]
+            gt = [x, y, x + w, y + h]
 
-            # Grounding sentences
-            sentences = ref_item.get("ref_info", {}).get("sentences", [])
-            if not sentences:
-                print(f"[{idx}] skip ref {ref_idx} (no sentences)")
-                continue
+            sentences = ref_info["ref_info"]["sentences"]
+            for sentence_info in sentences:
+                expr = sentence_info["sent"]
 
-            for s in sentences:
-                query = s.get("sent")
-                if not query:
-                    print(f"[{idx}] skip sentence (no query)")
+                # inference
+                pred = model.infer_from_image(img, expr)
+                if pred is None:
+                    # consider as wrong
+                    total += 1
+                    processed_samples += 1
                     continue
 
-                # === RECORD CPU USAGE BEFORE INFERENCE ===
-                cpu_percent = process.cpu_percent(interval=None)
-                t0 = time.time()
-                # --- RUN FLORENCE2 ---
-                pred_bbox = inference_grounding_florence2(image_obj, query)
-
-                t1 = time.time()
-                infer_time = t1 - t0
-                inference_timess.append(infer_time)
-
-                # === RECORD CPU USAGE AFTER INFERENCE ===
-                cpu_percent = process.cpu_percent(interval=None)
-                cpu_samples.append(cpu_percent)
-
-                total += 1
-
-                if pred_bbox is None:
-                    print(f"[{idx}] no prediction for query: {query}")
-                    continue
-
-                iou = bbox_iou(pred_bbox, gt_xyxy)
+                # compute IoU
+                iou = compute_iou(pred, gt)
                 if iou >= 0.5:
-                    correct +=1
+                    correct += 1
+                total += 1
+                processed_samples += 1
 
-                # =====SUMMARY=====
-                end_time = time.end()
-                elapsed = end_time - start_time
-                acc = correct / total if total > 0 else 0.0
-                avg_cpu = sum(cpu_samples) / len(cpu_samples) if cpu_samples > 0 else 0.0
-                min_infer = min(inference_times) if inference_times else None
-                max_infer = max(inference_times) if inference_times else None
-                avg_infer = sum(inference_times) / len(inference_times) if inference_times else None
-
-                print("\n=== COMPLETE ===")
-                print(f"Accuracy: {acc:.4f}")
-                print(f"Correct: {correct} / {total}")
-                print(f"Avg inference time: {avg_infer:.3f}s")
-                print(f"Fastest: {min_infer:.3f}s")
-                print(f"Slowest: {max_infer:.3f}s")
-                print(f"Avg CPU Usage: {avg_cpu:.1f}%")
-
-                return {
-                    "accuracy": acc,
-                    "correct": correct,
-                    "total": total,
-                    "avg_cpu": avg_cpu,
-                    "time_sec": elapsed,
-                    "min_infer_sec": min_infer,
-                    "max_infer_sec": max_infer,
-                    "avg_infer_sec": avg_infer,
-                    }
-
-    print("Done evaluating.")
+    acc = correct / total if total > 0 else 0.0
+    return {"accuracy": acc, "correct": correct, "total": total}
 
 if __name__ == '__main__':
     model = Florence2OnnxModel(
-        providers=["CPUExecutionProvider"],
-        warmup_iterations=5
+        providers=["CUDAExecutionProvider"],
+        warmup_iterations=10
     )
-    COCO_IMG_ROOT = "coco/val2014"
-    evaluate_refcoco(model, COCO_IMG_ROOT, sample_size=200)
+
+    dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
+    COCO_IMG_ROOT = "/coco/val2014"
+
+
+results = evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples=200)
