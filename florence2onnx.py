@@ -10,6 +10,8 @@ from transformers import AutoProcessor
 from datasets import load_dataset
 from tqdm import tqdm
 
+so = ort.SessionOptions()
+so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
 
 # WEIGHT FILES CAN BE DOWNLOADED FROM HERE: https://huggingface.co/onnx-community/Florence-2-base-ft/tree/main/onnx
 class Florence2OnnxModel:
@@ -32,22 +34,27 @@ class Florence2OnnxModel:
         self.vision_encoder = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/vision_encoder_q4f16.onnx"),
             providers=providers,
+	    session_options=so
         )
         self.text_embed = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/embed_tokens_q4f16.onnx"),
             providers=providers,
+	    session_options=so
         )
         self.encoder = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/encoder_model_q4f16.onnx"),
             providers=providers,
+	    session_options=so
         )
         self.decoder_prefill = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/decoder_model_q4f16.onnx"),
             providers=providers,
+	    session_options=so
         )
         self.decoder_decode = ort.InferenceSession(
             os.path.join(onnx_dir, "weight_files/decoder_model_merged_q4.onnx"),
             providers=providers,
+	    session_options=so
         )
 
         self.processor = AutoProcessor.from_pretrained(processor_dir, trust_remote_code=True)
@@ -69,14 +76,16 @@ class Florence2OnnxModel:
 
     def generate_caption(
         self,
-        image_path: str,
-        prompt: str = "<MORE_DETAILED_CAPTION>",
+        image: Image.Image | str,
+        expr: str,
+        task: str = "<MORE_DETAILED_CAPTION>",
         max_new_tokens: int = 1024
     ) -> (str, float):
 
 
-        image = Image.open(image_path)
-        inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
+        if isinstance(image, str):
+            image = Image.open(image)
+        inputs = self.processor(text=expr, images=image, return_tensors="np", do_resize=True)
 
         start_time = time.time()
 
@@ -174,20 +183,26 @@ class Florence2OnnxModel:
         )[0]
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task=prompt, image_size=(image.width, image.height)
+            generated_text, task=task, image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
     def infer_from_image(
         self,
-        image_path: str,
-        prompt: str = "<MORE_DETAILED_CAPTION>",
+        image: Image.Image,
+        expr: str,
+        task: str = "<CAPTION_TO_PHRASE_GROUNDING>",
         max_new_tokens: int = 1024
     ) -> None:
+        parsed_answer, inference_time = self.generate_caption(image, expr, task, max_new_tokens)
 
-        parsed_answer, inference_time = self.generate_caption(image_path, prompt, max_new_tokens)
-        print(f"Inference Time: {inference_time:.4f} seconds")
-        print("Answer:", parsed_answer)
+        print("Inference time: {inference_time:.4f} seconds")
+        print(parsed_answer)
+        grounding_result = parsed_answer.get(task, {})
+        bbox = grounding_result.get("bboxes", [None])[0]
+        return bbox, inference_time
+        #print(f"Inference Time: {inference_time:.4f} seconds")
+        #print("Answer:", parsed_answer)
 
 
 def compute_iou(boxA, boxB):
@@ -251,7 +266,7 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
 
 if __name__ == '__main__':
     model = Florence2OnnxModel(
-        providers=["CUDAExecutionProvider"],
+        providers=["CPUExecutionProvider"],
         warmup_iterations=10
     )
 
@@ -259,4 +274,5 @@ if __name__ == '__main__':
     COCO_IMG_ROOT = "/coco/val2014"
 
 
-results = evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples=200)
+#results = evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples=100)
+model.infer_from_image("./car.jpg",expr = "car", task = "<CAPTION_TO_PHRASE_GROUNDING>", max_new_tokens=1024)
