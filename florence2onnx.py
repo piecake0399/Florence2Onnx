@@ -183,7 +183,7 @@ class Florence2OnnxModel:
         )[0]
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task=prompt, image_size=(image.width, image.height)
+            generated_text, task=task, image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
@@ -198,7 +198,7 @@ class Florence2OnnxModel:
 
         print("Inference time: ", inference_time)
         print(parsed_answer)
-        grounding_result = parsed_answer.get(task, {})
+        grounding_result = list(parsed_answer.values())[0]
         bbox = grounding_result.get("bboxes", [None])[0]
         return bbox, inference_time
         #print(f"Inference Time: {inference_time:.4f} seconds")
