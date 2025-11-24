@@ -278,5 +278,5 @@ if __name__ == '__main__':
     COCO_IMG_ROOT = "/coco/val2014"
 
 
-#results = evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples=100)
-model.infer_from_image("./car.jpg",expr = "car", task = "<CAPTION_TO_PHRASE_GROUNDING>", max_new_tokens=1024)
+results = evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples=100)
+#model.infer_from_image("./car.jpg",expr = "car", task = "<CAPTION_TO_PHRASE_GROUNDING>", max_new_tokens=1024)
