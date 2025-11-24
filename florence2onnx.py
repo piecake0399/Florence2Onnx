@@ -82,7 +82,11 @@ class Florence2OnnxModel:
         max_new_tokens: int = 1024
     ) -> (str, float):
 
-        prompt = f"{task}: {expr}"
+        if task == "<CAPTION_TO_PHRASE_GROUNDING>":
+            prompt = f"{task}: {expr}. Identify the region."
+        else:
+            prompt = f"{task} {expr}"
+            
         if isinstance(image, str):
             image = Image.open(image)
         inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
