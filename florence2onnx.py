@@ -82,10 +82,10 @@ class Florence2OnnxModel:
         max_new_tokens: int = 1024
     ) -> (str, float):
 
-
+        prompt = f"{task} {expr}"
         if isinstance(image, str):
             image = Image.open(image)
-        inputs = self.processor(text=expr, images=image, return_tensors="np", do_resize=True)
+        inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
 
         start_time = time.time()
 
@@ -183,7 +183,7 @@ class Florence2OnnxModel:
         )[0]
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task=task, image_size=(image.width, image.height)
+            generated_text, task=prompt, image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
