@@ -196,7 +196,7 @@ class Florence2OnnxModel:
     ):
         parsed_answer, inference_time = self.generate_caption(image, expr, task, max_new_tokens)
 
-        print("Inference time: {inference_time:.4f} seconds")
+        print("Inference time: ", inference_time)
         print(parsed_answer)
         grounding_result = parsed_answer.get(task, {})
         bbox = grounding_result.get("bboxes", [None])[0]
