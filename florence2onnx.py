@@ -193,7 +193,7 @@ class Florence2OnnxModel:
         expr: str,
         task: str = "<CAPTION_TO_PHRASE_GROUNDING>",
         max_new_tokens: int = 1024
-    ) -> None:
+    )
         parsed_answer, inference_time = self.generate_caption(image, expr, task, max_new_tokens)
 
         print("Inference time: {inference_time:.4f} seconds")
