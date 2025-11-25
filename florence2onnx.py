@@ -196,7 +196,7 @@ class Florence2OnnxModel:
         image: Image.Image,
         expr: str,
         task: str = "<CAPTION_TO_PHRASE_GROUNDING>",
-        max_new_tokens: int = 1024
+        max_new_tokens: int = 128
     ):
         parsed_answer, inference_time = self.generate_caption(image, expr, task, max_new_tokens)
 
@@ -256,7 +256,7 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
 
                 # inference
                 task = "<CAPTION_TO_PHRASE_GROUNDING>"
-                pred, _ = model.infer_from_image(img, expr, task)
+                pred, _ = model.infer_from_image(img, expr, task, max_new_tokens=128)
                 if pred is None:
                     # consider as wrong
                     total += 1
