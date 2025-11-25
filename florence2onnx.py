@@ -203,7 +203,7 @@ class Florence2OnnxModel:
         print("Inference time: ", inference_time)
         print(parsed_answer)
         grounding_result = list(parsed_answer.values())[0]
-        bboxes = grounding_result.get("bboxes", [None])[0]
+        bboxes = grounding_result.get("bboxes", [None])
         if not bboxes or len(bboxes) == 0:
             return None, inference_time
 
