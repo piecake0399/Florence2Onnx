@@ -83,7 +83,7 @@ class Florence2OnnxModel:
     ) -> (str, float):
 
         if task == "<CAPTION_TO_PHRASE_GROUNDING>":
-            prompt = f"{task} {expr}. Identify the region."
+            prompt = f"{task} {expr}"
         else:
             prompt = f"{task} {expr}"
             
