@@ -251,7 +251,8 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
                 expr = sentence_info["sent"]
 
                 # inference
-                pred = model.infer_from_image(img, expr)
+                task = "<CAPTION_TO_PHRASE_GROUNDING>"
+                pred = model.infer_from_image(img, expr, task)
                 if pred is None:
                     # consider as wrong
                     total += 1
@@ -278,5 +279,5 @@ if __name__ == '__main__':
     COCO_IMG_ROOT = "/coco/val2014"
 
 
-results = evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples=100)
-#model.infer_from_image("./car.jpg",expr = "car", task = "<CAPTION_TO_PHRASE_GROUNDING>", max_new_tokens=1024)
+#results = evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples=100)
+model.infer_from_image("./car.jpg",expr = "car", task = "<CAPTION_TO_PHRASE_GROUNDING>", max_new_tokens=1024)
