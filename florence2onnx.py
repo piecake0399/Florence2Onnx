@@ -83,7 +83,7 @@ class Florence2OnnxModel:
     ) -> (str, float):
 
         if task == "<CAPTION_TO_PHRASE_GROUNDING>":
-            prompt = f"{task}: {expr}. Identify the region."
+            prompt = f"{task} {expr}. Identify the region."
         else:
             prompt = f"{task} {expr}"
             
@@ -271,6 +271,7 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
                 processed_samples += 1
 
     acc = correct / total if total > 0 else 0.0
+    print("Accuracy: ", acc)
     return {"accuracy": acc, "correct": correct, "total": total}
 
 if __name__ == '__main__':
