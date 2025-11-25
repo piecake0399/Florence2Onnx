@@ -117,10 +117,23 @@ class Florence2OnnxModel:
             {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask}
         )[0]
 
+        # Get BOS token ID (usually 0 or 2 for BART-based models like Florence-2)
+        bos_token_id = self.processor.tokenizer.bos_token_id
+        if bos_token_id is None:
+            bos_token_id = 0  # fallback
+
+        # Create decoder input
+        decoder_input_ids = np.array([[bos_token_id]], dtype=np.int64)
+        decoder_inputs_embeds = self.text_embed.run(
+            None, 
+            {"input_ids": decoder_input_ids}
+        )[0]
+
+        # Now run decoder prefill with CORRECT input
         decoder_outs = self.decoder_prefill.run(
             None,
             {
-                "inputs_embeds": inputs_embeds[:, -1:],
+                "inputs_embeds": decoder_inputs_embeds,  # ✓ CORRECT
                 "encoder_hidden_states": encoder_hidden_states,
                 "encoder_attention_mask": attention_mask
             }
