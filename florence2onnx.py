@@ -203,7 +203,11 @@ class Florence2OnnxModel:
         print("Inference time: ", inference_time)
         print(parsed_answer)
         grounding_result = list(parsed_answer.values())[0]
-        bbox = grounding_result.get("bboxes", [None])[0]
+        bboxes = grounding_result.get("bboxes", [None])[0]
+        if not bboxes or len(bboxes) == 0:
+            return None, inference_time
+
+        bbox = bboxes[0]
         return bbox, inference_time
         #print(f"Inference Time: {inference_time:.4f} seconds")
         #print("Answer:", parsed_answer)
@@ -252,7 +256,7 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
 
                 # inference
                 task = "<CAPTION_TO_PHRASE_GROUNDING>"
-                pred = model.infer_from_image(img, expr, task)
+                pred, _ = model.infer_from_image(img, expr, task)
                 if pred is None:
                     # consider as wrong
                     total += 1
