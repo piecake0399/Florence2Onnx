@@ -19,7 +19,7 @@ async function loadModel() {
     console.log("🔄 Loading Florence-2 model...");
 
     model = await Florence2ForConditionalGeneration.from_pretrained(MODEL_ID, {
-        dtype: "fp32",
+        dtype: "fp16",
     });
 
     processor = await AutoProcessor.from_pretrained(MODEL_ID);
