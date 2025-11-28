@@ -61,7 +61,7 @@ def evaluate_refcoco(server_url="http://localhost:3000/infer", iou_threshold=0.5
         sample = dataset[idx]
 
         # === Extract fields ===
-        img_path = sample["image_path"]
+        img_path = sample["image"]
         expression = sample["expression"]
         gt_box = sample["bbox"]   # ground-truth bbox [x1,y1,x2,y2]
 
