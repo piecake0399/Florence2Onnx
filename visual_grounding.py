@@ -62,7 +62,7 @@ def evaluate_refcoco(server_url="http://localhost:3000/infer", iou_threshold=0.5
 
         # === Extract fields ===
         img_path = sample["image"]
-        expression = sample["expression"]
+        expression = sample["expr"]
         gt_box = sample["bbox"]   # ground-truth bbox [x1,y1,x2,y2]
 
         # === Send to Florence2 server ===
