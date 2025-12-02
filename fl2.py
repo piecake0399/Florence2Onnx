@@ -3,6 +3,7 @@ import numpy as np
 import time
 from tqdm import tqdm
 from typing import List
+from scipy.special import softmax
 #import torch
 ##import matplotlib.patches as patches
 import onnxruntime as ort
@@ -125,11 +126,13 @@ class Florence2OnnxModel:
             decoder_kv = decoder_outs[1:]
 
             next_token_logits = logits[:, -1, :]
-            next_token = int(np.argmax(next_token_logits, axis=-1)[0])
+            probs = softmax(next_token_logits, axis=-1)
+            next_token = np.random.choice(len(probs[0]), p=probs[0])
             generated_tokens.append(next_token)
 
             # Break if the EOS token (assumed to be token id 2) is generated.
-            if next_token == 2:
+            eos_token_id = self.processor.tokenizer.eos_token_id
+            if next_token == eos_token_id:
                 break
 
             next_input_embeds = self.text_embed.run(
@@ -179,7 +182,7 @@ class Florence2OnnxModel:
         )[0]
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task=prompt, image_size=(image.width, image.height)
+            generated_text, task='<CAPTION_TO_PHRASE_GROUNDING>', image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
