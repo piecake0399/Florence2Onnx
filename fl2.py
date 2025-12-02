@@ -58,13 +58,15 @@ def inference_grounding_florence2(img: Image.Image, task, expr):
     img.save(buf, format="PNG")
     img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    result = subprocess.run(
-        ["node", "florence2.js", img_b64, task, expr],
-        capture_output=True,
+    proc = subprocess.run(
+        ["node", "florence2.js", task, expr],
+        input=img_b64,   # send image data via stdin
         text=True,
+        capture_output=True,
         check=True
     )
-    return json.loads(result.stdout)
+
+    return json.loads(proc.stdout)
 
 
 def compute_iou(boxA, boxB):

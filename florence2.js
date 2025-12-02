@@ -8,20 +8,6 @@ import { loadFlorence2, runFlorence2 } from "./florence2_module.js";
 import { Buffer } from "buffer";
 import { Image } from "image-js"; // or another lib to reconstruct
 
-if (process.argv.length >= 5) {
-    const imgB64 = process.argv[2];
-    const task = process.argv[3];
-    const expr = process.argv[4];
-
-    const buf = Buffer.from(imgB64, "base64");
-    const pilImage = await Image.load(buf);
-
-    await loadFlorence2();
-    const result = await runFlorence2(pilImage, task, expr);
-
-    console.log(JSON.stringify(result));
-}
-
 const MODEL_ID = "onnx-community/Florence-2-base";
 
 let model = null;
@@ -81,3 +67,19 @@ export async function runFlorence2(pilImage, task, expr) {
 
     return result;
 }
+
+const task = process.argv[2];
+const expr = process.argv[3];
+
+// read base64 image from stdin
+let imgB64 = "";
+process.stdin.on("data", chunk => { imgB64 += chunk; });
+process.stdin.on("end", async () => {
+    const buf = Buffer.from(imgB64, "base64");
+    const pilImage = await Image.load(buf);
+
+    await loadFlorence2();
+    const result = await runFlorence2(pilImage, task, expr);
+
+    console.log(JSON.stringify(result));
+});
