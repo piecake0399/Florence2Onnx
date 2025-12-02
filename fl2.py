@@ -70,7 +70,7 @@ class Florence2OnnxModel:
         image,
         prompt: str = "<CAPTION_TO_PHRASE_GROUNDING>",
         expr: str = "",
-        max_new_tokens: int = 1024
+        max_new_tokens: int = 64
     ) -> (dict, float):
 
 
@@ -203,4 +203,4 @@ if __name__ == '__main__':
 
     response = requests.get(img_url, stream=True)
     image = Image.open(response.raw).convert("RGB")
-    model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=1024)
+    model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=64)
