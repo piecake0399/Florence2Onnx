@@ -1,13 +1,12 @@
 import os
-import json
 import numpy as np
 import time
 from tqdm import tqdm
+from typing import List
 #import torch
-import tempfile, subprocess, json
 ##import matplotlib.patches as patches
-
-from transformers import AutoProcessor, Florence2ForConditionalGeneration
+import onnxruntime as ort
+from transformers import AutoProcessor
 from PIL import Image
 import requests
 #import copy
