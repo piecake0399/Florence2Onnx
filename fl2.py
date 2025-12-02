@@ -130,8 +130,7 @@ class Florence2OnnxModel:
             generated_tokens.append(next_token)
 
             # Break if the EOS token (assumed to be token id 2) is generated.
-            eos_token_id = self.processor.tokenizer.eos_token_id
-            if next_token == eos_token_id:
+            if next_token == 2:
                 break
 
             next_input_embeds = self.text_embed.run(
@@ -179,6 +178,7 @@ class Florence2OnnxModel:
         generated_text = self.processor.batch_decode(
             [generated_tokens], skip_special_tokens=False
         )[0]
+
 
         parsed_answer = self.processor.post_process_generation(
             generated_text, task='<CAPTION_TO_PHRASE_GROUNDING>', image_size=(image.width, image.height)
