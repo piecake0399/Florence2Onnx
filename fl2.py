@@ -280,7 +280,7 @@ def evaluate_dataset(dataset, img_root, n_samples=None):
 
 if __name__ == '__main__':
     model = Florence2OnnxModel(
-        providers=["CUDAExecutionProvider"],
+        providers=["CPUExecutionProvider"],
         warmup_iterations=10
     )
 
