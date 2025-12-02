@@ -1,7 +1,7 @@
 import os
 import time
 from typing import List
-#from scipy.special import softmax
+from scipy.special import softmax
 import numpy as np
 from PIL import Image
 import requests
@@ -70,7 +70,7 @@ class Florence2OnnxModel:
         image,
         prompt: str = "<CAPTION_TO_PHRASE_GROUNDING>",
         expr: str = "",
-        max_new_tokens: int = 64
+        max_new_tokens: int = 32
     ) -> (dict, float):
 
 
@@ -121,7 +121,8 @@ class Florence2OnnxModel:
             decoder_kv = decoder_outs[1:]
 
             next_token_logits = logits[:, -1, :]
-            next_token = np.argmax(next_token_logits, axis=-1)[0]
+            probs = softmax(next_token_logits)
+            next_token = np.random.choice(len(probs[0]), p=probs[0])
             generated_tokens.append(next_token)
 
             # Break if the EOS token (assumed to be token id 2) is generated.
@@ -184,7 +185,7 @@ class Florence2OnnxModel:
         image,
         prompt: str = "<MORE_DETAILED_CAPTION>",
         expr: str = "",
-        max_new_tokens: int = 1024
+        max_new_tokens: int = 32
     ) -> None:
 
         parsed_answer, inference_time = self.generate_caption(image, prompt, expr, max_new_tokens)
@@ -203,4 +204,4 @@ if __name__ == '__main__':
 
     response = requests.get(img_url, stream=True)
     image = Image.open(response.raw).convert("RGB")
-    model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=64)
+    model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=32)
