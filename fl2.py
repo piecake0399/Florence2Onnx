@@ -82,6 +82,7 @@ class Florence2OnnxModel:
         image_features = self.vision_encoder.run(
             None, {"pixel_values": inputs["pixel_values"]}
         )[0]
+        print("Image features shape:", image_features.shape)
 
         inputs_embeds = self.text_embed.run(
             None, {"input_ids": inputs["input_ids"]}
