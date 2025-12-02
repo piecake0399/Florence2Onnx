@@ -123,5 +123,13 @@ def evaluate_dataset(dataset, img_root, n_samples=None):
     acc = correct / total if total > 0 else 0.0
     return {"accuracy": acc, "correct": correct, "total": total}
 
-res = evaluate_dataset(dataset, COCO_IMG_ROOT, n_samples= None)
-print("Accuracy @ IoU>=0.5 (100 samples):", res)
+#res = evaluate_dataset(dataset, COCO_IMG_ROOT, n_samples= None)
+#print("Accuracy @ IoU>=0.5 (100 samples):", res)
+
+img_url = "https://www.datocms-assets.com/53444/1687431221-testing-the-saturn-v-rocket.jpg?auto=format&w=1200"
+expr = "A space rocket"
+response = requests.get(img_url, stream=True)
+image = Image.open(response.raw).convert("RGB")
+
+bbox = inference_grounding_florence2(image, "<CAPTION_TO_PHRASE_GROUNDING>" ,expr)
+print("Predicted bbox:", bbox)
