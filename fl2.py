@@ -68,8 +68,9 @@ class Florence2OnnxModel:
         self,
         image_path: str,
         prompt: str = "<MORE_DETAILED_CAPTION>",
+        expr: str = "",
         max_new_tokens: int = 1024
-    ) -> (str, float):
+    ) -> (dict, float):
 
 
         image = Image.open(image_path)
@@ -171,7 +172,7 @@ class Florence2OnnxModel:
         )[0]
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task=prompt, image_size=(image.width, image.height)
+            generated_text, task=prompt, input=expr, image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
@@ -179,10 +180,11 @@ class Florence2OnnxModel:
         self,
         image_path: str,
         prompt: str = "<MORE_DETAILED_CAPTION>",
+        expr: str = "",
         max_new_tokens: int = 1024
     ) -> None:
 
-        parsed_answer, inference_time = self.generate_caption(image_path, prompt, max_new_tokens)
+        parsed_answer, inference_time = self.generate_caption(image_path, prompt, expr, max_new_tokens)
         print(f"Inference Time: {inference_time:.4f} seconds")
         print("Answer:", parsed_answer)
 
@@ -192,4 +194,4 @@ if __name__ == '__main__':
         providers=["CPUExecutionProvider"],
         warmup_iterations=10
     )
-    model.infer_from_image("./car.jpg", prompt="<CAPTION_TO_PHRASE_GROUNDING>: car", max_new_tokens=1024)
+    model.infer_from_image("./car.jpg", prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr="car", max_new_tokens=1024)
