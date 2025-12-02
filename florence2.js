@@ -8,6 +8,26 @@ import { loadFlorence2, runFlorence2 } from "./florence2_module.js";
 import { Buffer } from "buffer";
 import { Image } from "image-js"; // or another lib to reconstruct
 
+const imagePath = process.argv[2];
+const task = process.argv[3];
+const expr = process.argv[4];
+
+if (!imagePath) {
+  console.error("❌ Missing image path");
+  process.exit(1);
+}
+
+try {
+  const image = await load_image(imagePath);
+  await loadFlorence2();
+  const result = await runFlorence2(image, task, expr);
+
+  console.log(JSON.stringify(result));
+} catch (err) {
+  console.error("❌ Inference error:", err);
+  process.exit(1);
+}
+
 const MODEL_ID = "onnx-community/Florence-2-base";
 
 let model = null;
@@ -68,13 +88,4 @@ export async function runFlorence2(pilImage, task, expr) {
     return result;
 }
 
-const imagePath = process.argv[2];
-const task = process.argv[3];
-const expr = process.argv[4];
-
-const image = await load_image(imagePath);
-await loadFlorence2();
-const result = await runFlorence2(image, task, expr);
-
-console.log(JSON.stringify(result));
 
