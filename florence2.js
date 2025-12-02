@@ -1,21 +1,40 @@
 // florence2.js
-import express from "express";
-import bodyParser from "body-parser";
 import {
     Florence2ForConditionalGeneration,
     AutoProcessor,
     load_image,
 } from '@huggingface/transformers';
+import { loadFlorence2, runFlorence2 } from "./florence2_module.js";
+import { Buffer } from "buffer";
+import { Image } from "image-js"; // or another lib to reconstruct
 
-// -----------------------------
-// Global model (load once)
-// -----------------------------
+if (process.argv.length >= 5) {
+    const imgB64 = process.argv[2];
+    const task = process.argv[3];
+    const expr = process.argv[4];
+
+    const buf = Buffer.from(imgB64, "base64");
+    const pilImage = await Image.load(buf);
+
+    await loadFlorence2();
+    const result = await runFlorence2(pilImage, task, expr);
+
+    console.log(JSON.stringify(result));
+}
+
 const MODEL_ID = "onnx-community/Florence-2-base";
 
 let model = null;
 let processor = null;
 
-async function loadModel() {
+/**
+ * Load Florence2 model and processor (singleton).
+ */
+export async function loadFlorence2() {
+    if (model && processor) {
+        return { model, processor };
+    }
+
     console.log("🔄 Loading Florence-2 model...");
 
     model = await Florence2ForConditionalGeneration.from_pretrained(MODEL_ID, {
@@ -25,66 +44,40 @@ async function loadModel() {
     processor = await AutoProcessor.from_pretrained(MODEL_ID);
 
     console.log("✅ Florence-2 loaded");
+
+    return { model, processor };
 }
 
-await loadModel();
-
-// -----------------------------
-// Server
-// -----------------------------
-const app = express();
-app.use(bodyParser.json({ limit: "10mb" }));
-
-// Main inference endpoint
-app.post("/infer", async (req, res) => {
-    try {
-        const { image_path, task, expr } = req.body;
-
-        if (!image_path) {
-            return res.status(400).json({ error: "Missing image_path" });
-        }
-
-        // Load image
-        const image = await load_image(image_path);
-
-        // Construct prompts
-        const prompts = processor.construct_prompts(task, expr);
-        const inputs = await processor(image, prompts);
-
-        // Run model
-        const generated_ids = await model.generate({
-            ...inputs,
-            max_new_tokens: 200,
-        });
-
-        // Decode
-        const generated_text = processor.batch_decode(
-            generated_ids,
-            { skip_special_tokens: false }
-        )[0];
-
-        // Post-process output
-        const result = processor.post_process_generation(
-            generated_text,
-            task,
-            image.size
-        );
-
-        res.json({
-            success: true,
-            task,
-            expr,
-            result
-        });
-
-    } catch (error) {
-        console.error("❌ Inference error:", error);
-        res.status(500).json({ error: error.toString() });
+/**
+ * Run inference on an image with a given task + expression.
+ */
+export async function runFlorence2(pilImage, task, expr) {
+    if (!model || !processor) {
+        await loadFlorence2();
     }
-});
 
-// Start the server
-const PORT = 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Florence2 server running at http://localhost:${PORT}`);
-});
+    // Construct prompts
+    const prompts = processor.construct_prompts(task, expr);
+    const inputs = await processor(pilImage, prompts);
+
+    // Run model
+    const generated_ids = await model.generate({
+        ...inputs,
+        max_new_tokens: 200,
+    });
+
+    // Decode
+    const generated_text = processor.batch_decode(
+        generated_ids,
+        { skip_special_tokens: false }
+    )[0];
+
+    // Post-process output
+    const result = processor.post_process_generation(
+        generated_text,
+        task,
+        pilImage.size
+    );
+
+    return result;
+}

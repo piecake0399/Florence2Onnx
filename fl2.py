@@ -2,7 +2,8 @@ import os
 import json
 import numpy as np
 from tqdm import tqdm
-import torch
+#import torch
+import base64, io, subprocess, json
 ##import matplotlib.patches as patches
 
 from transformers import AutoProcessor, Florence2ForConditionalGeneration
@@ -11,45 +12,60 @@ import requests
 #import copy
 
 from datasets import load_dataset
-from pycocotools import mask as maskUtils
-%matplotlib inline
+#from pycocotools import mask as maskUtils
+#%matplotlib inline
 
-model_id = 'onnx-community/Florence-2-base'
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# model_id = 'onnx-community/Florence-2-base'
+# device = "cuda" if torch.cuda.is_available() else "cpu"
 
-processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-model = Florence2ForConditionalGeneration.from_pretrained(
-    model_id,
-    dtype="q8"
-)
+# processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+# model = Florence2ForConditionalGeneration.from_pretrained(
+#     model_id,
+#     dtype="q8"
+# )
 #model.eval()
 
 dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
 COCO_IMG_ROOT = "~/coco/val2014"
 
-def inference_grounding_florence2(image_pil, expr):
-    task = "<CAPTION_TO_PHRASE_GROUNDING>"
-    prompts = processor.construct_prompts(task, expr)
-    inputs = processor(image_pil, prompts)
-    # ONNX generate
-    generated_ids = model.generate(
-        **inputs,
-        max_new_tokens=128
+# def inference_grounding_florence2(image_pil, expr):
+#     task = "<CAPTION_TO_PHRASE_GROUNDING>"
+#     prompts = processor.construct_prompts(task, expr)
+#     inputs = processor(image_pil, prompts)
+#     # ONNX generate
+#     generated_ids = model.generate(
+#         **inputs,
+#         max_new_tokens=128
+#     )
+#     out_str = processor.batch_decode(
+#         generated_ids,
+#         skip_special_tokens=False
+#     )[0]
+#     result = processor.post_process_generation(
+#         out_str,
+#         task,
+#         image_pil.size
+#     )
+#     grounding = result.get(task, {})
+#     if "bboxes" in grounding and len(grounding["bboxes"]) > 0:
+#         return grounding["bboxes"][0]
+#     else:
+#         return None
+
+
+def inference_grounding_florence2(img: Image.Image, task, expr):
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    result = subprocess.run(
+        ["node", "florence2.js", img_b64, task, expr],
+        capture_output=True,
+        text=True,
+        check=True
     )
-    out_str = processor.batch_decode(
-        generated_ids,
-        skip_special_tokens=False
-    )[0]
-    result = processor.post_process_generation(
-        out_str,
-        task,
-        image_pil.size
-    )
-    grounding = result.get(task, {})
-    if "bboxes" in grounding and len(grounding["bboxes"]) > 0:
-        return grounding["bboxes"][0]
-    else:
-        return None
+    return json.loads(result.stdout)
+
 
 def compute_iou(boxA, boxB):
     """boxA, boxB dạng [x1,y1,x2,y2] tuyệt đối"""
@@ -65,52 +81,55 @@ def compute_iou(boxA, boxB):
     union = boxAArea + boxBArea - interArea
     return interArea / union if union > 0 else 0.0
 
+
 def evaluate_dataset(dataset, img_root, n_samples=None):
     """
     dataset: HF dataset with fields: image_id, ann(bbox), ref_list
-    img_root: đường dẫn chứa ảnh (not used in this version)
-    n_samples: nếu None dùng toàn bộ, nếu int dùng subset đầu
+    img_root: path containing images (not used here)
+    n_samples: if None use all, if int use subset
     """
     total = 0
     correct = 0
-    processed_samples = 0  # Counter for processed samples
+    processed_samples = 0
 
     for i, sample in enumerate(tqdm(dataset)):
         if (n_samples is not None) and (processed_samples >= n_samples):
             break
 
         img = sample["image"].convert("RGB")
+        W, H = img.size
         ref_list = sample["ref_list"]
 
         for ref_info in ref_list:
             ann_info = ref_info["ann_info"]
             gt_bbox = ann_info["bbox"]  # COCO format: [x, y, w, h]
-            # convert to [x1, y1, x2, y2]
             x, y, w, h = gt_bbox
-            gt = [x, y, x + w, y + h]
+            gt = [x, y, x + w, y + h]  # [x1, y1, x2, y2]
 
             sentences = ref_info["ref_info"]["sentences"]
             for sentence_info in sentences:
                 expr = sentence_info["sent"]
 
-                # inference
-                pred_xywh_norm = inference_grounding_florence2(img, expr)
-                if pred is None:
-                    # consider as wrong
+                # inference via Node Florence2
+                pred_xywh_norm = inference_grounding_florence2(img, "<CAPTION_TO_PHRASE_GROUNDING>", expr)
+
+                if pred_xywh_norm is None:
                     total += 1
                     processed_samples += 1
                     continue
 
-                px = pred_xywh_norm[0] * W
-                py = pred_xywh_norm[1] * H
-                pw = pred_xywh_norm[2] * W
-                ph = pred_xywh_norm[3] * H
+                # convert normalized [cx, cy, w, h] → pixel coords
+                cx, cy, nw, nh = pred_xywh_norm
+                px = cx * W
+                py = cy * H
+                pw = nw * W
+                ph = nh * H
 
                 pred = [
-                    px - pw/2,
-                    py - ph/2,
-                    px + pw/2,
-                    py + ph/2
+                    px - pw / 2,
+                    py - ph / 2,
+                    px + pw / 2,
+                    py + ph / 2,
                 ]
 
                 # compute IoU
