@@ -3,6 +3,7 @@ import numpy as np
 import time
 from tqdm import tqdm
 from typing import List
+
 #import torch
 ##import matplotlib.patches as patches
 import onnxruntime as ort
@@ -178,9 +179,9 @@ class Florence2OnnxModel:
         generated_text = self.processor.batch_decode(
             [generated_tokens], skip_special_tokens=False
         )[0]
-        h, w = inputs["pixel_values"].shape[-2:]
+
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task='<CAPTION_TO_PHRASE_GROUNDING>', image_size=(w, h)
+            generated_text, task='<CAPTION_TO_PHRASE_GROUNDING>', image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
