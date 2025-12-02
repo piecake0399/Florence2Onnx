@@ -192,4 +192,4 @@ if __name__ == '__main__':
         providers=["CPUExecutionProvider"],
         warmup_iterations=10
     )
-    model.infer_from_image("./car.jpg", prompt="<MORE_DETAILED_CAPTION>", max_new_tokens=1024)
+    model.infer_from_image("./car.jpg", prompt="<CAPTION_TO_PHRASE_GROUNDING>: car", max_new_tokens=1024)
