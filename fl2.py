@@ -40,8 +40,8 @@ def inference_grounding_florence2(img: Image.Image, task, expr):
         text=True,
         #check=True
     )
-    print("NODE STDERR:\n", proc.stderr)
-    print("NODE STDOUT:\n", proc.stdout)
+    #print("NODE STDERR:\n", proc.stderr)
+    #print("NODE STDOUT:\n", proc.stdout)
 
     return json.loads(proc.stdout)
 
