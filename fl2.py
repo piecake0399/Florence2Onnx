@@ -3,7 +3,7 @@ import json
 import numpy as np
 from tqdm import tqdm
 #import torch
-import base64, io, subprocess, json
+import tempfile, subprocess, json
 ##import matplotlib.patches as patches
 
 from transformers import AutoProcessor, Florence2ForConditionalGeneration
