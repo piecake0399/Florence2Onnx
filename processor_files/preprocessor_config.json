@@ -29,11 +29,11 @@
   "processor_class": "Florence2Processor",
   "resample": 3,
   "size": {
-    "height": 768,
-    "width":768
+    "height": 224,
+    "width":224
   },
   "crop_size": {
-    "height": 768,
-    "width": 768
+    "height": 224,
+    "width": 224
   }
 }
