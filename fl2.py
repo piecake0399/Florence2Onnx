@@ -74,7 +74,7 @@ class Florence2OnnxModel:
 
 
         image = Image.open(image_path)
-        prompt = f"{prompt} {expr}".strip()
+        prompt = f"{prompt} {expr}"
         inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
 
         start_time = time.time()
