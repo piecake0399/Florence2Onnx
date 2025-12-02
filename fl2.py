@@ -121,7 +121,7 @@ class Florence2OnnxModel:
             decoder_kv = decoder_outs[1:]
 
             next_token_logits = logits[:, -1, :]
-            next_token = int(np.argmax(next_token_logits, axis=-1)[0])
+            next_token = np.argmax(next_token_logits, axis=-1)[0]
             generated_tokens.append(next_token)
 
             # Break if the EOS token (assumed to be token id 2) is generated.
