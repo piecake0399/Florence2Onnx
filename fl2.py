@@ -1,7 +1,7 @@
 import os
 import time
 from typing import List
-
+from scipy.special import softmax
 import numpy as np
 from PIL import Image
 import onnxruntime as ort
@@ -82,7 +82,7 @@ class Florence2OnnxModel:
         image_features = self.vision_encoder.run(
             None, {"pixel_values": inputs["pixel_values"]}
         )[0]
-        print("Image features shape:", image_features.shape)
+        #print("Image features shape:", image_features.shape)
 
         inputs_embeds = self.text_embed.run(
             None, {"input_ids": inputs["input_ids"]}
@@ -120,7 +120,8 @@ class Florence2OnnxModel:
             decoder_kv = decoder_outs[1:]
 
             next_token_logits = logits[:, -1, :]
-            next_token = int(np.argmax(next_token_logits, axis=-1)[0])
+            probs = softmax(next_token_logits, axis=-1)
+            next_token = np.random.choice(len(probs[0]), p=probs[0])
             generated_tokens.append(next_token)
 
             # Break if the EOS token (assumed to be token id 2) is generated.
