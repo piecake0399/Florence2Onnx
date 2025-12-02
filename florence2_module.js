@@ -12,7 +12,7 @@ let processor = null;
 export async function loadFlorence2() {
     if (model && processor) return { model, processor };
 
-    console.log("🔄 Loading Florence-2 model...");
+    console.error("🔄 Loading Florence-2 model...");
 
     model = await Florence2ForConditionalGeneration.from_pretrained(MODEL_ID, {
         dtype: "q8",
@@ -20,7 +20,7 @@ export async function loadFlorence2() {
 
     processor = await AutoProcessor.from_pretrained(MODEL_ID);
 
-    console.log("✅ Florence-2 loaded");
+    console.error("✅ Florence-2 loaded");
 
     return { model, processor };
 }
