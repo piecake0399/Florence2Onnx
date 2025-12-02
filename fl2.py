@@ -28,30 +28,6 @@ from datasets import load_dataset
 dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
 COCO_IMG_ROOT = "~/coco/val2014"
 
-# def inference_grounding_florence2(image_pil, expr):
-#     task = "<CAPTION_TO_PHRASE_GROUNDING>"
-#     prompts = processor.construct_prompts(task, expr)
-#     inputs = processor(image_pil, prompts)
-#     # ONNX generate
-#     generated_ids = model.generate(
-#         **inputs,
-#         max_new_tokens=128
-#     )
-#     out_str = processor.batch_decode(
-#         generated_ids,
-#         skip_special_tokens=False
-#     )[0]
-#     result = processor.post_process_generation(
-#         out_str,
-#         task,
-#         image_pil.size
-#     )
-#     grounding = result.get(task, {})
-#     if "bboxes" in grounding and len(grounding["bboxes"]) > 0:
-#         return grounding["bboxes"][0]
-#     else:
-#         return None
-
 
 def inference_grounding_florence2(img: Image.Image, task, expr):
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -62,8 +38,10 @@ def inference_grounding_florence2(img: Image.Image, task, expr):
         ["node", "florence2.js", tmp.name, task, expr],
         capture_output=True,
         text=True,
-        check=True
+        #check=True
     )
+    print("NODE STDERR:\n", proc.stderr)
+    print("NODE STDOUT:\n", proc.stdout)
 
     return json.loads(proc.stdout)
 
