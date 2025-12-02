@@ -97,8 +97,8 @@ class Florence2OnnxModel:
         if task_prefix_attention_mask.ndim == 3:
             task_prefix_attention_mask = task_prefix_attention_mask[:, 0]
 
-        inputs_embeds = np.concatenate([image_features, task_prefix_embeds], axis=1)
-        attention_mask = np.concatenate([image_attention_mask, task_prefix_attention_mask], axis=1)
+        inputs_embeds = np.concatenate([task_prefix_embeds, image_features], axis=1)
+        attention_mask = np.concatenate([task_prefix_attention_mask, image_attention_mask], axis=1)
 
         encoder_hidden_states = self.encoder.run(
             None,
