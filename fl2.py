@@ -4,6 +4,7 @@ from typing import List
 from scipy.special import softmax
 import numpy as np
 from PIL import Image
+import requests
 import onnxruntime as ort
 from transformers import AutoProcessor
 
@@ -66,14 +67,14 @@ class Florence2OnnxModel:
 
     def generate_caption(
         self,
-        image_path: str,
+        image,
         prompt: str = "<MORE_DETAILED_CAPTION>",
         expr: str = "",
         max_new_tokens: int = 1024
     ) -> (dict, float):
 
 
-        image = Image.open(image_path)
+        #image = Image.open(image_path)
         prompt = f"{prompt} {expr}"
         inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
 
@@ -181,13 +182,13 @@ class Florence2OnnxModel:
 
     def infer_from_image(
         self,
-        image_path: str,
+        image,
         prompt: str = "<MORE_DETAILED_CAPTION>",
         expr: str = "",
         max_new_tokens: int = 1024
     ) -> None:
 
-        parsed_answer, inference_time = self.generate_caption(image_path, prompt, expr, max_new_tokens)
+        parsed_answer, inference_time = self.generate_caption(image, prompt, expr, max_new_tokens)
         print(f"Inference Time: {inference_time:.4f} seconds")
         print("Answer:", parsed_answer)
 
@@ -197,4 +198,10 @@ if __name__ == '__main__':
         providers=["CPUExecutionProvider"],
         warmup_iterations=10
     )
-    model.infer_from_image("./car.jpg", prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr="car", max_new_tokens=1024)
+
+    img_url = "https://www.datocms-assets.com/53444/1687431221-testing-the-saturn-v-rocket.jpg?auto=format&w=1200"
+    expr = "A space rocket"
+
+    response = requests.get(img_url, stream=True)
+    image = Image.open(response.raw).convert("RGB")
+    model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=1024)
