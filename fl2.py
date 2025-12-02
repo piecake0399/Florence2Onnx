@@ -1,21 +1,14 @@
 import os
-import numpy as np
 import time
-from tqdm import tqdm
 from typing import List
 
-#import torch
-##import matplotlib.patches as patches
+import numpy as np
+from PIL import Image
 import onnxruntime as ort
 from transformers import AutoProcessor
-from PIL import Image
-import requests
-#import copy
 
-from datasets import load_dataset
-#from pycocotools import mask as maskUtils
-#%matplotlib inline
 
+# WEIGHT FILES CAN BE DOWNLOADED FROM HERE: https://huggingface.co/onnx-community/Florence-2-base-ft/tree/main/onnx
 class Florence2OnnxModel:
     def __init__(
         self,
@@ -70,18 +63,16 @@ class Florence2OnnxModel:
                 "inputs_embeds": np.zeros((1, 10, 768), dtype=np.float32),
                 "attention_mask": np.zeros((1, 10), dtype=np.int64)
             })
-    
+
     def generate_caption(
         self,
-        image,
+        image_path: str,
         prompt: str = "<MORE_DETAILED_CAPTION>",
-        expr: str = "",
-        max_new_tokens: int = 200
-    ) -> (dict, float):
+        max_new_tokens: int = 1024
+    ) -> (str, float):
 
 
-        #image = Image.open(image_path)
-        prompt = f"{prompt} {expr}".strip()
+        image = Image.open(image_path)
         inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
 
         start_time = time.time()
@@ -180,119 +171,25 @@ class Florence2OnnxModel:
         )[0]
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task='<CAPTION_TO_PHRASE_GROUNDING>', image_size=(image.width, image.height)
+            generated_text, task=prompt, image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
     def infer_from_image(
         self,
-        image,
-        prompt: str = "<CAPTION_TO_PHRASE_GROUNDING>",
-        expr: str = "",
+        image_path: str,
+        prompt: str = "<MORE_DETAILED_CAPTION>",
         max_new_tokens: int = 1024
     ) -> None:
 
-        parsed_answer, inference_time = self.generate_caption(image, prompt, expr, max_new_tokens)
+        parsed_answer, inference_time = self.generate_caption(image_path, prompt, max_new_tokens)
         print(f"Inference Time: {inference_time:.4f} seconds")
         print("Answer:", parsed_answer)
 
-dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
-COCO_IMG_ROOT = "~/coco/val2014"
-
-def compute_iou(boxA, boxB):
-    """boxA, boxB dạng [x1,y1,x2,y2] tuyệt đối"""
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
-    interW = max(0, xB - xA)
-    interH = max(0, yB - yA)
-    interArea = interW * interH
-    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
-    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
-    union = boxAArea + boxBArea - interArea
-    return interArea / union if union > 0 else 0.0
-
-
-def evaluate_dataset(dataset, img_root, n_samples=None):
-    """
-    dataset: HF dataset with fields: image_id, ann(bbox), ref_list
-    img_root: path containing images (not used here)
-    n_samples: if None use all, if int use subset
-    """
-    total = 0
-    correct = 0
-    processed_samples = 0
-
-    for i, sample in enumerate(tqdm(dataset)):
-        if (n_samples is not None) and (processed_samples >= n_samples):
-            break
-
-        img = sample["image"].convert("RGB")
-        W, H = img.size
-        ref_list = sample["ref_list"]
-
-        for ref_info in ref_list:
-            ann_info = ref_info["ann_info"]
-            gt_bbox = ann_info["bbox"]  # COCO format: [x, y, w, h]
-            x, y, w, h = gt_bbox
-            gt = [x, y, x + w, y + h]  # [x1, y1, x2, y2]
-
-            sentences = ref_info["ref_info"]["sentences"]
-            for sentence_info in sentences:
-                expr = sentence_info["sent"]
-
-                # inference via Node Florence2
-                raw = inference_grounding_florence2(img, "<CAPTION_TO_PHRASE_GROUNDING>", expr)
-                result = raw["<CAPTION_TO_PHRASE_GROUNDING>"]
-                pred_xywh_norm = result["bboxes"][0]  # [cx, cy, w, h] normalized
-                
-                if pred_xywh_norm is None:
-                    total += 1
-                    processed_samples += 1
-                    continue
-
-                # convert normalized [cx, cy, w, h] → pixel coords
-                cx, cy, nw, nh = pred_xywh_norm
-                px = cx * W
-                py = cy * H
-                pw = nw * W
-                ph = nh * H
-
-                pred = [
-                    px - pw / 2,
-                    py - ph / 2,
-                    px + pw / 2,
-                    py + ph / 2,
-                ]
-
-                # compute IoU
-                iou = compute_iou(pred, gt)
-                if iou >= 0.5:
-                    correct += 1
-                total += 1
-                processed_samples += 1
-
-    acc = correct / total if total > 0 else 0.0
-    return {"accuracy": acc, "correct": correct, "total": total}
-
-#res = evaluate_dataset(dataset, COCO_IMG_ROOT, n_samples= None)
-#print("Accuracy @ IoU>=0.5 (100 samples):", res)
 
 if __name__ == '__main__':
     model = Florence2OnnxModel(
         providers=["CPUExecutionProvider"],
         warmup_iterations=10
     )
-
-img_url = "https://www.datocms-assets.com/53444/1687431221-testing-the-saturn-v-rocket.jpg?auto=format&w=1200"
-expr = "A space rocket"
-response = requests.get(img_url, stream=True)
-image = Image.open(response.raw).convert("RGB")
-
-model.infer_from_image(
-    image=image,
-    prompt="<CAPTION_TO_PHRASE_GROUNDING>",
-    expr=expr,
-    max_new_tokens=1024
-)
+    model.infer_from_image("./car.jpg", prompt="<MORE_DETAILED_CAPTION>", max_new_tokens=1024)
