@@ -74,6 +74,7 @@ class Florence2OnnxModel:
 
 
         image = Image.open(image_path)
+        prompt = f"{prompt} {expr}".strip()
         inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
 
         start_time = time.time()
@@ -172,7 +173,7 @@ class Florence2OnnxModel:
         )[0]
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task=prompt, input=expr, image_size=(image.width, image.height)
+            generated_text, task="<CAPTION_TO_PHRASE_GROUNDING>", image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
