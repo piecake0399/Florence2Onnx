@@ -187,10 +187,11 @@ class Florence2OnnxModel:
         self,
         image,
         prompt: str = "<CAPTION_TO_PHRASE_GROUNDING>",
+        expr: str = "",
         max_new_tokens: int = 1024
     ) -> None:
 
-        parsed_answer, inference_time = self.generate_caption(image, prompt, max_new_tokens)
+        parsed_answer, inference_time = self.generate_caption(image, prompt, expr, max_new_tokens)
         print(f"Inference Time: {inference_time:.4f} seconds")
         print("Answer:", parsed_answer)
 
@@ -291,5 +292,6 @@ image = Image.open(response.raw).convert("RGB")
 model.infer_from_image(
     image=image,
     prompt="<CAPTION_TO_PHRASE_GROUNDING>",
+    expr=expr,
     max_new_tokens=1024
 )
