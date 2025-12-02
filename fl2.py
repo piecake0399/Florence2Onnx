@@ -76,7 +76,7 @@ class Florence2OnnxModel:
         image,
         prompt: str = "<MORE_DETAILED_CAPTION>",
         expr: str = "",
-        max_new_tokens: int = 1024
+        max_new_tokens: int = 200
     ) -> (dict, float):
 
 
@@ -178,7 +178,6 @@ class Florence2OnnxModel:
         generated_text = self.processor.batch_decode(
             [generated_tokens], skip_special_tokens=False
         )[0]
-
 
         parsed_answer = self.processor.post_process_generation(
             generated_text, task='<CAPTION_TO_PHRASE_GROUNDING>', image_size=(image.width, image.height)
