@@ -28,19 +28,19 @@ class Florence2OnnxModel:
             providers = ["CPUExecutionProvider"]
 
         self.vision_encoder = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/vision_encoder_q4f16.onnx"),
+            os.path.join(onnx_dir, "weight_files/vision_encoder_q4.onnx"),
             providers=providers,
         )
         self.text_embed = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/embed_tokens_q4f16.onnx"),
+            os.path.join(onnx_dir, "weight_files/embed_tokens_q4.onnx"),
             providers=providers,
         )
         self.encoder = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/encoder_model_q4f16.onnx"),
+            os.path.join(onnx_dir, "weight_files/encoder_model_q4.onnx"),
             providers=providers,
         )
         self.decoder_prefill = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/decoder_model_q4f16.onnx"),
+            os.path.join(onnx_dir, "weight_files/decoder_model_q4.onnx"),
             providers=providers,
         )
         self.decoder_decode = ort.InferenceSession(
