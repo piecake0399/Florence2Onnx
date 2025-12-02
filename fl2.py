@@ -175,7 +175,7 @@ class Florence2OnnxModel:
         )[0]
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task="<CAPTION_TO_PHRASE_GROUNDING>", image_size=(384, 384) 
+            generated_text, task="<CAPTION_TO_PHRASE_GROUNDING>", image_size=(image.width, image.height)
         )
         return parsed_answer, total_time
 
