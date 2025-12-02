@@ -90,8 +90,10 @@ def evaluate_dataset(dataset, img_root, n_samples=None):
                 expr = sentence_info["sent"]
 
                 # inference via Node Florence2
-                pred_xywh_norm = inference_grounding_florence2(img, "<CAPTION_TO_PHRASE_GROUNDING>", expr)
-
+                raw = inference_grounding_florence2(img, "<CAPTION_TO_PHRASE_GROUNDING>", expr)
+                result = raw["<CAPTION_TO_PHRASE_GROUNDING>"]
+                pred_xywh_norm = result["bboxes"][0]  # [cx, cy, w, h] normalized
+                
                 if pred_xywh_norm is None:
                     total += 1
                     processed_samples += 1
