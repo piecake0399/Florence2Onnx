@@ -178,9 +178,9 @@ class Florence2OnnxModel:
         generated_text = self.processor.batch_decode(
             [generated_tokens], skip_special_tokens=False
         )[0]
-
+        h, w = inputs["pixel_values"].shape[-2:]
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task='<CAPTION_TO_PHRASE_GROUNDING>', image_size=inputs["pixel_values"]
+            generated_text, task='<CAPTION_TO_PHRASE_GROUNDING>', image_size=(w, h)
         )
         return parsed_answer, total_time
 
