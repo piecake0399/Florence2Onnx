@@ -68,18 +68,13 @@ export async function runFlorence2(pilImage, task, expr) {
     return result;
 }
 
-const task = process.argv[2];
-const expr = process.argv[3];
+const imagePath = process.argv[2];
+const task = process.argv[3];
+const expr = process.argv[4];
 
-// read base64 image from stdin
-let imgB64 = "";
-process.stdin.on("data", chunk => { imgB64 += chunk; });
-process.stdin.on("end", async () => {
-    const buf = Buffer.from(imgB64, "base64");
-    const pilImage = await Image.load(buf);
+const image = await load_image(imagePath);
+await loadFlorence2();
+const result = await runFlorence2(image, task, expr);
 
-    await loadFlorence2();
-    const result = await runFlorence2(pilImage, task, expr);
+console.log(JSON.stringify(result));
 
-    console.log(JSON.stringify(result));
-});

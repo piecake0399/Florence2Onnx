@@ -54,15 +54,14 @@ COCO_IMG_ROOT = "~/coco/val2014"
 
 
 def inference_grounding_florence2(img: Image.Image, task, expr):
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        img.save(tmp.name)
+
 
     proc = subprocess.run(
-        ["node", "florence2.js", task, expr],
-        input=img_b64,   # send image data via stdin
-        text=True,
+        ["node", "florence2.js", tmp.name, task, expr],
         capture_output=True,
+        text=True,
         check=True
     )
 
