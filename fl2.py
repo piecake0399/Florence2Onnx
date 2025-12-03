@@ -5,6 +5,7 @@ from scipy.special import softmax
 import numpy as np
 from PIL import Image
 import requests
+import psutil
 import onnxruntime as ort
 from transformers import AutoProcessor
 
@@ -71,19 +72,25 @@ class Florence2OnnxModel:
         prompt: str = "<CAPTION_TO_PHRASE_GROUNDING>",
         expr: str = "",
         max_new_tokens: int = 32
-    ) -> (dict, float):
+    ) -> (dict, float, float):
 
 
         #image = Image.open(image_path)
         prompt = f"{prompt} {expr}"
         inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
-
+        #print("INPUT KEYS:", list(inputs.keys()))
+        
+        # ======== CPU USAGE START MEASURE ========
         start_time = time.time()
+        process = psutil.Process()
+        rss_before = process.memory_info().rss
+        # ==========================================
 
         image_features = self.vision_encoder.run(
             None, {"pixel_values": inputs["pixel_values"]}
         )[0]
-        #print("Image features shape:", image_features.shape)
+        #print("Original size", image.size)
+        #print("Image resize", inputs["pixel_values"].shape)
 
         inputs_embeds = self.text_embed.run(
             None, {"input_ids": inputs["input_ids"]}
@@ -168,17 +175,27 @@ class Florence2OnnxModel:
                 }
             )
 
+        # ==========================================
         end_time = time.time()
         total_time = end_time - start_time
+        
+        # ======== CPU USAGE END MEASURE ========
+        rss_after = process.memory_info().rss
+        peak_memory = rss_after - rss_before  # bytes
+        # ==========================================
 
+        #print("GENERATED TOKENS:", generated_tokens[:80])
         generated_text = self.processor.batch_decode(
             [generated_tokens], skip_special_tokens=False
         )[0]
+        #print("GENERATED TEXT:", repr(generated_text))
 
         parsed_answer = self.processor.post_process_generation(
-            generated_text, task="<CAPTION_TO_PHRASE_GROUNDING>", image_size=(image.width, image.height)
+            generated_text, 
+            task="<CAPTION_TO_PHRASE_GROUNDING>", 
+            image_size=(image.width*2, image.height*2)
         )
-        return parsed_answer, total_time
+        return parsed_answer, total_time, peak_memory
 
     def infer_from_image(
         self,
@@ -186,11 +203,30 @@ class Florence2OnnxModel:
         prompt: str = "<MORE_DETAILED_CAPTION>",
         expr: str = "",
         max_new_tokens: int = 32
-    ) -> None:
+    ) -> (list, str, float, float):
 
-        parsed_answer, inference_time = self.generate_caption(image, prompt, expr, max_new_tokens)
+        parsed_answer, inference_time, peak_mem = self.generate_caption(image, prompt, expr, max_new_tokens)
+        
+        task_key = list(parsed_answer.keys())[0]  # ví dụ "<CAPTION_TO_PHRASE_GROUNDING>"
+        result = parsed_answer[task_key]
+
+        bboxes = result.get("bboxes", [])
+        labels = result.get("labels", [])
+
+        # Nếu không có bbox → trả None
+        if len(bboxes) == 0:
+            return None, None, inference_time, peak_mem
+
+        # Florence chỉ trả 1 bbox → lấy cái đầu
+        bbox = bboxes[0]
+        label = labels[0] if len(labels) > 0 else None
+
         print(f"Inference Time: {inference_time:.4f} seconds")
-        print("Answer:", parsed_answer)
+        print("Bbox:", bbox)
+        print("Label:", label)
+        print(f"Peak RAM usage: {peak_mem / 1024 / 1024:.2f} MB")
+
+        return bbox, label, inference_time, peak_mem
 
 
 if __name__ == '__main__':
@@ -199,9 +235,11 @@ if __name__ == '__main__':
         warmup_iterations=10
     )
 
-    img_url = "https://www.datocms-assets.com/53444/1687431221-testing-the-saturn-v-rocket.jpg?auto=format&w=1200"
-    expr = "A space rocket"
+    # img_url = "https://www.datocms-assets.com/53444/1687431221-testing-the-saturn-v-rocket.jpg?auto=format&w=1200"
+    # expr = "A space rocket"
 
-    response = requests.get(img_url, stream=True)
-    image = Image.open(response.raw).convert("RGB")
+    # response = requests.get(img_url, stream=True)
+
+    image = Image.open("car.jpg")
+    expr = "car"
     model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=32)
