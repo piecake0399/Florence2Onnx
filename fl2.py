@@ -9,6 +9,9 @@ import psutil
 import onnxruntime as ort
 from transformers import AutoProcessor
 
+import tqdm
+from datasets import load_dataset
+
 
 # WEIGHT FILES CAN BE DOWNLOADED FROM HERE: https://huggingface.co/onnx-community/Florence-2-base-ft/tree/main/onnx
 class Florence2OnnxModel:
@@ -213,11 +216,9 @@ class Florence2OnnxModel:
         bboxes = result.get("bboxes", [])
         labels = result.get("labels", [])
 
-        # Nếu không có bbox → trả None
         if len(bboxes) == 0:
             return None, None, inference_time, peak_mem
 
-        # Florence chỉ trả 1 bbox → lấy cái đầu
         bbox = bboxes[0]
         label = labels[0] if len(labels) > 0 else None
 
@@ -228,6 +229,88 @@ class Florence2OnnxModel:
 
         return bbox, label, inference_time, peak_mem
 
+def compute_iou(boxA, boxB):
+    """Bbox and ground truth format: [x1, y1, x2, y2]"""
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    interW = max(0, xB - xA)
+    interH = max(0, yB - yA)
+    interArea = interW * interH
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    union = boxAArea + boxBArea - interArea
+    return interArea / union if union > 0 else 0.0
+
+def evaluate_dataset(model, dataset, img_root, n_samples=None):
+    """
+    dataset: HF dataset with fields: image_id, ann(bbox), ref_list
+    img_root: đường dẫn chứa ảnh (not used in this version)
+    n_samples: nếu None dùng toàn bộ, nếu int dùng subset đầu
+    """
+    total = 0
+    correct = 0
+    processed_samples = 0  # Counter for processed samples
+    infer_times = []
+    peak_mems = []
+
+    for i, sample in enumerate(tqdm(dataset)):
+        if (n_samples is not None) and (processed_samples >= n_samples):
+            break
+
+        img = sample["image"].convert("RGB")
+        ref_list = sample["ref_list"]
+
+        for ref_info in ref_list:
+            ann_info = ref_info["ann_info"]
+            gt_bbox = ann_info["bbox"]  # COCO format: [x, y, w, h]
+            # convert to [x1, y1, x2, y2]
+            x, y, w, h = gt_bbox
+            gt = [x, y, x + w, y + h]
+
+            sentences = ref_info["ref_info"]["sentences"]
+            for sentence_info in sentences:
+                expr = sentence_info["sent"]
+
+                # inference
+                bbox, label, infer_time, peak_mem = model.infer_from_image(
+                    image=img, 
+                    prompt="<CAPTION_TO_PHRASE_GROUNDING>",
+                    expr=expr,
+                    max_new_tokens=32
+                    )
+                
+                infer_times.append(infer_time)
+                peak_mems.append(peak_mem)
+                if bbox is None:
+                    # consider as wrong
+                    total += 1
+                    processed_samples += 1
+                    continue
+
+                # compute IoU
+                iou = compute_iou(bbox, gt)
+                if iou >= 0.5:
+                    correct += 1
+                total += 1
+                processed_samples += 1
+
+
+    acc = correct / total if total > 0 else 0.0
+    print("------- Evaluation Results ------")
+    print(f"Correct predictions: {correct}/{total}")
+    print(f"Accuracy: {acc*100:.2f}%")
+    print("---------------------------------")
+    print(f"Average inference time: {np.mean(infer_times):.4f} seconds")
+    print(f"Minimum inference time: {np.min(infer_times):.4f} seconds")
+    print(f"Maximum inference time: {np.max(infer_times):.4f} seconds")
+    print("---------------------------------")
+    print(f"Average peak RAM usage: {np.mean(peak_mems) / 1024 / 1024:.2f} MB")
+    print(f"Minimum peak RAM usage: {np.min(peak_mems) / 1024 / 1024:.2f} MB")
+    print(f"Maximum peak RAM usage: {np.max(peak_mems) / 1024 / 1024:.2f} MB")
+    print("---------------------------------")
+    #return {"accuracy": acc, "correct": correct, "total": total}
 
 if __name__ == '__main__':
     model = Florence2OnnxModel(
@@ -240,6 +323,11 @@ if __name__ == '__main__':
 
     # response = requests.get(img_url, stream=True)
 
-    image = Image.open("car.jpg")
-    expr = "car"
-    model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=32)
+    # image = Image.open("car.jpg")
+    # expr = "car"
+    # model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=32)
+
+    dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
+    COCO_IMG_ROOT = "~/coco/val2014"
+
+    evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples= None)
