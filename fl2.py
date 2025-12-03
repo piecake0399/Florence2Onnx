@@ -9,7 +9,7 @@ import psutil
 import onnxruntime as ort
 from transformers import AutoProcessor
 
-import tqdm
+from tqdm import tqdm
 from datasets import load_dataset
 
 
