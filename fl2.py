@@ -315,7 +315,7 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
 if __name__ == '__main__':
     model = Florence2OnnxModel(
         providers=["CPUExecutionProvider"],
-        warmup_iterations=10
+        warmup_iterations=3
     )
 
     # img_url = "https://www.datocms-assets.com/53444/1687431221-testing-the-saturn-v-rocket.jpg?auto=format&w=1200"
