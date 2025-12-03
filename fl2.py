@@ -222,10 +222,10 @@ class Florence2OnnxModel:
         bbox = bboxes[0]
         label = labels[0] if len(labels) > 0 else None
 
-        print(f"Inference Time: {inference_time:.4f} seconds")
-        print("Bbox:", bbox)
-        print("Label:", label)
-        print(f"Peak RAM usage: {peak_mem / 1024 / 1024:.2f} MB")
+        # print(f"Inference Time: {inference_time:.4f} seconds")
+        # print("Bbox:", bbox)
+        # print("Label:", label)
+        # print(f"Peak RAM usage: {peak_mem / 1024 / 1024:.2f} MB")
 
         return bbox, label, inference_time, peak_mem
 
@@ -292,6 +292,7 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
                 # compute IoU
                 iou = compute_iou(bbox, gt)
                 if iou >= 0.5:
+                    print("Debug: IoU =", iou)
                     correct += 1
                 total += 1
                 processed_samples += 1
