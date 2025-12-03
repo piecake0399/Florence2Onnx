@@ -291,8 +291,8 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
 
                 # compute IoU
                 iou = compute_iou(bbox, gt)
+                print("Debug: IoU =", iou)
                 if iou >= 0.5:
-                    print("Debug: IoU =", iou)
                     correct += 1
                 total += 1
                 processed_samples += 1
@@ -331,4 +331,4 @@ if __name__ == '__main__':
     dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
     COCO_IMG_ROOT = "~/coco/val2014"
 
-    evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples= None)
+    evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples= 100)
