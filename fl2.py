@@ -12,6 +12,9 @@ from transformers import AutoProcessor
 from tqdm import tqdm
 from datasets import load_dataset
 
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
 
 # WEIGHT FILES CAN BE DOWNLOADED FROM HERE: https://huggingface.co/onnx-community/Florence-2-base-ft/tree/main/onnx
 class Florence2OnnxModel:
@@ -243,7 +246,23 @@ def compute_iou(boxA, boxB):
     union = boxAArea + boxBArea - interArea
     return interArea / union if union > 0 else 0.0
 
-def evaluate_dataset(model, dataset, img_root, n_samples=None):
+def bbox_draw(image: Image.Image, expr: str, bbox: list, color: str = "red") -> Image.Image:
+    # Vẽ bounding box bằng matplotlib
+    fig, ax = plt.subplots(figsize=(6,6))
+    ax.imshow(image)
+
+    if bbox is not None:
+        x1, y1, x2, y2 = bbox
+        rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, color="red", linewidth=2)
+        ax.add_patch(rect)
+        ax.text(x1, y1-5, expr, color="red", fontsize=12, backgroundcolor=None)
+    else:
+        plt.title("No bounding box detected")
+
+    plt.axis("off")
+    plt.show()
+
+def evaluate_dataset(model, dataset, n_samples=None):
     """
     dataset: HF dataset with fields: image_id, ann(bbox), ref_list
     img_root: đường dẫn chứa ảnh (not used in this version)
@@ -259,6 +278,7 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
         if (n_samples is not None) and (processed_samples >= n_samples):
             break
 
+        img_id = sample.get("image_id", f"sample_{i}")
         img = sample["image"].convert("RGB")
         ref_list = sample["ref_list"]
 
@@ -273,29 +293,54 @@ def evaluate_dataset(model, dataset, img_root, n_samples=None):
             for sentence_info in sentences:
                 expr = sentence_info["sent"]
 
+                # print("\n========================")
+                # print(f"Image ID        : {img_id}")
+                # print(f"Ref index       : {ref_info}")
+                # print(f"Sentence index  : {sentence_info}")
+                # print(f"Label           : {label}")
+                # print(f"Expression      : \"{expr}\"")
+                # print(f"GT bbox (xyxy)  : {gt}")
+                # print("========================")
+                
                 # inference
                 bbox, label, infer_time, peak_mem = model.infer_from_image(
                     image=img, 
                     prompt="<CAPTION_TO_PHRASE_GROUNDING>",
                     expr=expr,
-                    max_new_tokens=32
+                    max_new_tokens=128
                     )
                 
                 infer_times.append(infer_time)
                 peak_mems.append(peak_mem)
                 if bbox is None:
                     # consider as wrong
+                    print("No bbox predicted.")
+                    print("\n========================")
+                    print(f"Image ID        : {img_id}")
+                    print(f"Expression      : \"{expr}\"")
+                    print(f"GT bbox (xyxy)  : {gt}")
+                    print("========================")
+                    
+                    # fig, ax = plt.subplots(figsize=(6,6))
+                    # ax.imshow(img)
+                    # plt.axis("off")
+                    # plt.show()
+
                     total += 1
                     processed_samples += 1
                     continue
+                #else: 
+                    #print("Detected bbox:", bbox)
+                    #bbox_draw(img, expr, bbox)
 
                 # compute IoU
                 iou = compute_iou(bbox, gt)
-                print("Debug: IoU =", iou)
-                if iou >= 0.5:
+                if iou >= 0.3:
                     correct += 1
                 total += 1
                 processed_samples += 1
+
+                #input("Press Enter to continue to the next sample...")
 
 
     acc = correct / total if total > 0 else 0.0
@@ -329,6 +374,6 @@ if __name__ == '__main__':
     # model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=32)
 
     dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
-    COCO_IMG_ROOT = "~/coco/val2014"
+    #COCO_IMG_ROOT = "~/coco/val2014"
 
-    evaluate_dataset(model, dataset, COCO_IMG_ROOT, n_samples= 100)
+    evaluate_dataset(model, dataset, n_samples= None)
