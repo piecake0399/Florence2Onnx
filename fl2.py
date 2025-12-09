@@ -39,23 +39,23 @@ class Florence2OnnxModel:
         FL2BASE_FT = ROOT + "fl2base-ft/"
 
         self.vision_encoder = ort.InferenceSession(
-            os.path.join(onnx_dir, FL2BASE_FT + "/vision_encoder_q4f16.onnx"),
+            os.path.join(onnx_dir, ROOT + "/vision_encoder_q4f16.onnx"),
             providers=providers,
         )
         self.text_embed = ort.InferenceSession(
-            os.path.join(onnx_dir, FL2BASE_FT + "/embed_tokens_q4f16.onnx"),
+            os.path.join(onnx_dir, ROOT + "/embed_tokens_q4f16.onnx"),
             providers=providers,
         )
         self.encoder = ort.InferenceSession(
-            os.path.join(onnx_dir, FL2BASE_FT + "/encoder_model_q4f16.onnx"),
+            os.path.join(onnx_dir, ROOT + "/encoder_model_q4f16.onnx"),
             providers=providers,
         )
         self.decoder_prefill = ort.InferenceSession(
-            os.path.join(onnx_dir, FL2BASE_FT + "/decoder_model_q4f16.onnx"),
+            os.path.join(onnx_dir, ROOT + "/decoder_model_q4f16.onnx"),
             providers=providers,
         )
         self.decoder_decode = ort.InferenceSession(
-            os.path.join(onnx_dir, FL2BASE_FT + "/decoder_model_merged_q4.onnx"),
+            os.path.join(onnx_dir, ROOT + "/decoder_model_merged_q4.onnx"),
             providers=providers,
         )
 
@@ -318,23 +318,25 @@ def evaluate_dataset(model, dataset, n_samples=None):
                 infer_times.append(infer_time)
                 # peak_mems.append(peak_mem)
                 if bbox is None:
-                    #consider as wrong
-                    bbox_draw(img, expr, None, gt)
+                    # consider as wrong
+                    # bbox_draw(img, expr, None, gt)
                     total += 1
                     processed_samples += 1
                     continue
-                else: 
-                    print("Detected bbox:", bbox)
+                # else: 
                     # print("Memory used (MB):", peak_mem / 1024 / 1024)
-                    print("Inference time (s):", infer_time)
-                    bbox_draw(img, expr, bbox, gt)
+
+                    # bbox_draw(img, expr, bbox, gt)
 
                 # compute IoU
                 iou = compute_iou(bbox, gt)
-                if iou >= 0.3:
+                if iou >= 0.5:
                     correct += 1
                 total += 1
                 processed_samples += 1
+                print("Detected bbox:", bbox)
+                print("Inference time (s):", infer_time)
+                print(f"IoU: {iou:.4f} --> {'Correct' if iou >= 0.5 else 'Wrong'}")
 
                 #input("Press Enter to continue to the next sample...")
 
