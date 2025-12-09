@@ -1,4 +1,4 @@
-onnxruntime-gpu
+﻿onnxruntime-gpu
 transformers
 pillow
 psutil
@@ -7,3 +7,4 @@ torch
 datasets
 tqdm
 requests
+matplotlib

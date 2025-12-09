@@ -1,7 +1,7 @@
 import os
 import time
 from typing import List
-from scipy.special import softmax
+#from scipy.special import softmax
 import numpy as np
 from PIL import Image
 import requests
@@ -34,24 +34,28 @@ class Florence2OnnxModel:
         if providers is None:
             providers = ["CPUExecutionProvider"]
 
+        ROOT = "weight_files/"
+        FL2BASE = ROOT + "fl2base/"
+        FL2BASE_FT = ROOT + "fl2base-ft/"
+
         self.vision_encoder = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/vision_encoder_q4.onnx"),
+            os.path.join(onnx_dir, FL2BASE_FT + "/vision_encoder_q4f16.onnx"),
             providers=providers,
         )
         self.text_embed = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/embed_tokens_q4.onnx"),
+            os.path.join(onnx_dir, FL2BASE_FT + "/embed_tokens_q4f16.onnx"),
             providers=providers,
         )
         self.encoder = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/encoder_model_q4.onnx"),
+            os.path.join(onnx_dir, FL2BASE_FT + "/encoder_model_q4f16.onnx"),
             providers=providers,
         )
         self.decoder_prefill = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/decoder_model_q4.onnx"),
+            os.path.join(onnx_dir, FL2BASE_FT + "/decoder_model_q4f16.onnx"),
             providers=providers,
         )
         self.decoder_decode = ort.InferenceSession(
-            os.path.join(onnx_dir, "weight_files/decoder_model_merged_q4.onnx"),
+            os.path.join(onnx_dir, FL2BASE_FT + "/decoder_model_merged_q4.onnx"),
             providers=providers,
         )
 
@@ -77,8 +81,8 @@ class Florence2OnnxModel:
         image,
         prompt: str = "<CAPTION_TO_PHRASE_GROUNDING>",
         expr: str = "",
-        max_new_tokens: int = 32
-    ) -> (dict, float, float):
+        max_new_tokens: int = 128
+    ) -> (dict, float):
 
 
         #image = Image.open(image_path)
@@ -88,8 +92,8 @@ class Florence2OnnxModel:
         
         # ======== CPU USAGE START MEASURE ========
         start_time = time.time()
-        process = psutil.Process()
-        rss_before = process.memory_info().rss
+        # process = psutil.Process()
+        # rss_before = process.memory_info().rss
         # ==========================================
 
         image_features = self.vision_encoder.run(
@@ -186,8 +190,8 @@ class Florence2OnnxModel:
         total_time = end_time - start_time
         
         # ======== CPU USAGE END MEASURE ========
-        rss_after = process.memory_info().rss
-        peak_memory = rss_after - rss_before  # bytes
+        # rss_after = process.memory_info().rss
+        # peak_memory = rss_after - rss_before  # bytes
         # ==========================================
 
         #print("GENERATED TOKENS:", generated_tokens[:80])
@@ -201,17 +205,17 @@ class Florence2OnnxModel:
             task="<CAPTION_TO_PHRASE_GROUNDING>", 
             image_size=(image.width*2, image.height*2)
         )
-        return parsed_answer, total_time, peak_memory
+        return parsed_answer, total_time
 
     def infer_from_image(
         self,
         image,
         prompt: str = "<MORE_DETAILED_CAPTION>",
         expr: str = "",
-        max_new_tokens: int = 32
-    ) -> (list, str, float, float):
+        max_new_tokens: int = 128
+    ) -> (list, str, float):
 
-        parsed_answer, inference_time, peak_mem = self.generate_caption(image, prompt, expr, max_new_tokens)
+        parsed_answer, inference_time = self.generate_caption(image, prompt, expr, max_new_tokens)
         
         task_key = list(parsed_answer.keys())[0]  # ví dụ "<CAPTION_TO_PHRASE_GROUNDING>"
         result = parsed_answer[task_key]
@@ -220,7 +224,7 @@ class Florence2OnnxModel:
         labels = result.get("labels", [])
 
         if len(bboxes) == 0:
-            return None, None, inference_time, peak_mem
+            return None, None, inference_time
 
         bbox = bboxes[0]
         label = labels[0] if len(labels) > 0 else None
@@ -230,7 +234,7 @@ class Florence2OnnxModel:
         # print("Label:", label)
         # print(f"Peak RAM usage: {peak_mem / 1024 / 1024:.2f} MB")
 
-        return bbox, label, inference_time, peak_mem
+        return bbox, label, inference_time
 
 def compute_iou(boxA, boxB):
     """Bbox and ground truth format: [x1, y1, x2, y2]"""
@@ -246,16 +250,19 @@ def compute_iou(boxA, boxB):
     union = boxAArea + boxBArea - interArea
     return interArea / union if union > 0 else 0.0
 
-def bbox_draw(image: Image.Image, expr: str, bbox: list, color: str = "red") -> Image.Image:
+def bbox_draw(image: Image.Image, expr: str, bbox: list, bbox2: list ,color: str = "red") -> Image.Image:
     # Vẽ bounding box bằng matplotlib
     fig, ax = plt.subplots(figsize=(6,6))
     ax.imshow(image)
 
     if bbox is not None:
         x1, y1, x2, y2 = bbox
-        rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, color="red", linewidth=2)
+        rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, color="red", linewidth=3)
         ax.add_patch(rect)
-        ax.text(x1, y1-5, expr, color="red", fontsize=12, backgroundcolor=None)
+        x3, y3, x4, y4 = bbox2
+        rect2 = plt.Rectangle((x3, y3), x4-x3, y4-y3, fill=False, color="green", linewidth=3)
+        ax.add_patch(rect2)
+        ax.text(x1, y1-20, expr, color="red", fontsize=12, weight='bold', backgroundcolor='white')
     else:
         plt.title("No bounding box detected")
 
@@ -265,14 +272,15 @@ def bbox_draw(image: Image.Image, expr: str, bbox: list, color: str = "red") -> 
 def evaluate_dataset(model, dataset, n_samples=None):
     """
     dataset: HF dataset with fields: image_id, ann(bbox), ref_list
-    img_root: đường dẫn chứa ảnh (not used in this version)
     n_samples: nếu None dùng toàn bộ, nếu int dùng subset đầu
     """
     total = 0
     correct = 0
     processed_samples = 0  # Counter for processed samples
     infer_times = []
-    peak_mems = []
+    
+    process = psutil.Process()
+    rss_before = process.memory_info().rss
 
     for i, sample in enumerate(tqdm(dataset)):
         if (n_samples is not None) and (processed_samples >= n_samples):
@@ -293,45 +301,33 @@ def evaluate_dataset(model, dataset, n_samples=None):
             for sentence_info in sentences:
                 expr = sentence_info["sent"]
 
-                # print("\n========================")
-                # print(f"Image ID        : {img_id}")
-                # print(f"Ref index       : {ref_info}")
-                # print(f"Sentence index  : {sentence_info}")
-                # print(f"Label           : {label}")
-                # print(f"Expression      : \"{expr}\"")
-                # print(f"GT bbox (xyxy)  : {gt}")
-                # print("========================")
+                print("\n========================")
+                print(f"Image ID        : {img_id}")
+                print(f"Expression      : \"{expr}\"")
+                print(f"GT bbox (xyxy)  : {gt}")
+                print("========================")
                 
                 # inference
-                bbox, label, infer_time, peak_mem = model.infer_from_image(
+                bbox, label, infer_time = model.infer_from_image(
                     image=img, 
                     prompt="<CAPTION_TO_PHRASE_GROUNDING>",
                     expr=expr,
-                    max_new_tokens=128
+                    max_new_tokens=256
                     )
                 
                 infer_times.append(infer_time)
-                peak_mems.append(peak_mem)
+                # peak_mems.append(peak_mem)
                 if bbox is None:
-                    # consider as wrong
-                    print("No bbox predicted.")
-                    print("\n========================")
-                    print(f"Image ID        : {img_id}")
-                    print(f"Expression      : \"{expr}\"")
-                    print(f"GT bbox (xyxy)  : {gt}")
-                    print("========================")
-                    
-                    # fig, ax = plt.subplots(figsize=(6,6))
-                    # ax.imshow(img)
-                    # plt.axis("off")
-                    # plt.show()
-
+                    #consider as wrong
+                    bbox_draw(img, expr, None, gt)
                     total += 1
                     processed_samples += 1
                     continue
-                #else: 
-                    #print("Detected bbox:", bbox)
-                    #bbox_draw(img, expr, bbox)
+                else: 
+                    print("Detected bbox:", bbox)
+                    # print("Memory used (MB):", peak_mem / 1024 / 1024)
+                    print("Inference time (s):", infer_time)
+                    bbox_draw(img, expr, bbox, gt)
 
                 # compute IoU
                 iou = compute_iou(bbox, gt)
@@ -344,6 +340,10 @@ def evaluate_dataset(model, dataset, n_samples=None):
 
 
     acc = correct / total if total > 0 else 0.0
+    rss_after = process.memory_info().rss
+    total_mem_used_bytes = rss_after - rss_before
+    total_mem_used_mb = total_mem_used_bytes / 1024 / 1024
+
     print("------- Evaluation Results ------")
     print(f"Correct predictions: {correct}/{total}")
     print(f"Accuracy: {acc*100:.2f}%")
@@ -352,9 +352,10 @@ def evaluate_dataset(model, dataset, n_samples=None):
     print(f"Minimum inference time: {np.min(infer_times):.4f} seconds")
     print(f"Maximum inference time: {np.max(infer_times):.4f} seconds")
     print("---------------------------------")
-    print(f"Average peak RAM usage: {np.mean(peak_mems) / 1024 / 1024:.2f} MB")
-    print(f"Minimum peak RAM usage: {np.min(peak_mems) / 1024 / 1024:.2f} MB")
-    print(f"Maximum peak RAM usage: {np.max(peak_mems) / 1024 / 1024:.2f} MB")
+    print(f"Total memory used during benchmark: {total_mem_used_mb:.2f} MB")
+    # print(f"Average peak RAM usage: {np.mean(peak_mems) / 1024 / 1024:.2f} MB")
+    # print(f"Minimum peak RAM usage: {np.min(peak_mems) / 1024 / 1024:.2f} MB")
+    # print(f"Maximum peak RAM usage: {np.max(peak_mems) / 1024 / 1024:.2f} MB")
     print("---------------------------------")
     #return {"accuracy": acc, "correct": correct, "total": total}
 
@@ -376,4 +377,4 @@ if __name__ == '__main__':
     dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
     #COCO_IMG_ROOT = "~/coco/val2014"
 
-    evaluate_dataset(model, dataset, n_samples= None)
+    evaluate_dataset(model, dataset, n_samples= 100)
