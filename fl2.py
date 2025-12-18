@@ -17,224 +17,294 @@ import matplotlib.patches as patches
 
 
 # WEIGHT FILES CAN BE DOWNLOADED FROM HERE: https://huggingface.co/onnx-community/Florence-2-base-ft/tree/main/onnx
+import os
+import time
+import numpy as np
+import onnxruntime as ort
+from typing import List, Optional
+from PIL import Image
+from transformers import AutoProcessor
+
+
 class Florence2OnnxModel:
+    """
+    Florence-2 ONNX inference wrapper
+    Supports multiple Florence-2 tasks with correct prompt routing.
+    """
+
+    # ===== Task definitions =====
+    NO_TEXT_TASKS = {
+        "<CAPTION>",
+        "<DETAILED_CAPTION>",
+        "<MORE_DETAILED_CAPTION>",
+        "<OD>",
+        "<OCR>",
+        "<OCR_WITH_REGION>",
+        "<DENSE_REGION_CAPTION>",
+        "<REGION_PROPOSAL>",
+    }
+
+    TEXT_TASKS = {
+        "<CAPTION_TO_PHRASE_GROUNDING>",
+        "<REFERRING_EXPRESSION_SEGMENTATION>",
+        "<OPEN_VOCABULARY_DETECTION>",
+    }
+
     def __init__(
         self,
-        providers: List[str] = None,
-        warmup_iterations: int = 10,
+        providers: Optional[List[str]] = None,
+        warmup_iterations: int = 5,
     ):
-
-        # Change working directory to the provided ONNX directory
-        onnx_dir: str = os.path.dirname(os.path.abspath(__file__))
+        onnx_dir = os.path.dirname(os.path.abspath(__file__))
         os.chdir(onnx_dir)
-
-        processor_dir: str = os.path.join(onnx_dir, "processor_files")
-
 
         if providers is None:
             providers = ["CPUExecutionProvider"]
 
-        ROOT = "weight_files/"
-        FL2BASE = ROOT + "fl2base/"
-        FL2BASE_FT = ROOT + "fl2base-ft/"
+        ROOT = "weight_files"
 
         self.vision_encoder = ort.InferenceSession(
-            os.path.join(onnx_dir, ROOT + "/vision_encoder_q4f16.onnx"),
+            os.path.join(onnx_dir, ROOT, "vision_encoder_q4f16.onnx"),
             providers=providers,
         )
         self.text_embed = ort.InferenceSession(
-            os.path.join(onnx_dir, ROOT + "/embed_tokens_q4f16.onnx"),
+            os.path.join(onnx_dir, ROOT, "embed_tokens_q4f16.onnx"),
             providers=providers,
         )
         self.encoder = ort.InferenceSession(
-            os.path.join(onnx_dir, ROOT + "/encoder_model_q4f16.onnx"),
+            os.path.join(onnx_dir, ROOT, "encoder_model_q4f16.onnx"),
             providers=providers,
         )
         self.decoder_prefill = ort.InferenceSession(
-            os.path.join(onnx_dir, ROOT + "/decoder_model_q4f16.onnx"),
+            os.path.join(onnx_dir, ROOT, "decoder_model_q4f16.onnx"),
             providers=providers,
         )
         self.decoder_decode = ort.InferenceSession(
-            os.path.join(onnx_dir, ROOT + "/decoder_model_merged_q4.onnx"),
+            os.path.join(onnx_dir, ROOT, "decoder_model_merged_q4.onnx"),
             providers=providers,
         )
 
-        self.processor = AutoProcessor.from_pretrained(processor_dir, trust_remote_code=True)
+        processor_dir = os.path.join(onnx_dir, "processor_files")
+        self.processor = AutoProcessor.from_pretrained(
+            processor_dir, trust_remote_code=True
+        )
 
-        self._warmup(iterations=warmup_iterations)
+        self._warmup(warmup_iterations)
 
-    def _warmup(self, iterations: int = 10) -> None:
-        dummy_image = Image.new("RGB", (384, 384))
-        dummy_prompt = "<MORE_DETAILED_CAPTION>"
-        dummy_inputs = self.processor(text=dummy_prompt, images=dummy_image, return_tensors="np")
+    # ------------------------------------------------------------------
+    # Prompt routing
+    # ------------------------------------------------------------------
+    def _build_prompt(self, task: str, expr: Optional[str]) -> str:
+        if task in self.NO_TEXT_TASKS:
+            return task
+
+        if task in self.TEXT_TASKS:
+            if not expr or not expr.strip():
+                raise ValueError(f"Task {task} requires expression text")
+            return f"{task}{expr}"
+
+        raise ValueError(f"Unknown Florence-2 task: {task}")
+
+    # ------------------------------------------------------------------
+    # Warmup
+    # ------------------------------------------------------------------
+    def _warmup(self, iterations: int):
+        dummy_img = Image.new("RGB", (384, 384))
+        dummy_inputs = self.processor(
+            text="<MORE_DETAILED_CAPTION>",
+            images=dummy_img,
+            return_tensors="np",
+        )
 
         for _ in range(iterations):
-            _ = self.vision_encoder.run(None, {"pixel_values": dummy_inputs["pixel_values"]})
-            _ = self.text_embed.run(None, {"input_ids": dummy_inputs["input_ids"]})
-            _ = self.encoder.run(None, {
-                "inputs_embeds": np.zeros((1, 10, 768), dtype=np.float32),
-                "attention_mask": np.zeros((1, 10), dtype=np.int64)
-            })
+            _ = self.vision_encoder.run(
+                None, {"pixel_values": dummy_inputs["pixel_values"]}
+            )
+            _ = self.text_embed.run(
+                None, {"input_ids": dummy_inputs["input_ids"]}
+            )
+            _ = self.encoder.run(
+                None,
+                {
+                    "inputs_embeds": np.zeros((1, 10, 768), dtype=np.float32),
+                    "attention_mask": np.ones((1, 10), dtype=np.int64),
+                },
+            )
 
-    def generate_caption(
+    # ------------------------------------------------------------------
+    # Core generation
+    # ------------------------------------------------------------------
+    def generate(
         self,
-        image,
-        prompt: str = "<CAPTION_TO_PHRASE_GROUNDING>",
-        expr: str = "",
-        max_new_tokens: int = 128
-    ) -> (dict, float):
+        image: Image.Image,
+        task: str,
+        expr: Optional[str] = None,
+        max_new_tokens: int = 128,
+    ):
+        prompt = self._build_prompt(task, expr)
 
+        inputs = self.processor(
+            text=prompt,
+            images=image,
+            return_tensors="np",
+            do_resize=True,
+        )
 
-        #image = Image.open(image_path)
-        prompt = f"{prompt} {expr}"
-        inputs = self.processor(text=prompt, images=image, return_tensors="np", do_resize=True)
-        #print("INPUT KEYS:", list(inputs.keys()))
-        
-        # ======== CPU USAGE START MEASURE ========
         start_time = time.time()
-        # process = psutil.Process()
-        # rss_before = process.memory_info().rss
-        # ==========================================
 
+        # Vision encoder
         image_features = self.vision_encoder.run(
             None, {"pixel_values": inputs["pixel_values"]}
         )[0]
-        #print("Original size", image.size)
-        #print("Image resize", inputs["pixel_values"].shape)
+        # print("Vision feat stats:",
+        #     image_features.min(),
+        #     image_features.max(),
+        #     image_features.mean(),
+        #     image_features.std()
+        # )
+        #image_features[:] = 0
 
-        inputs_embeds = self.text_embed.run(
+        # Text embed
+        text_embeds = self.text_embed.run(
             None, {"input_ids": inputs["input_ids"]}
         )[0]
 
-        batch_size, image_token_length = image_features.shape[:-1]
-        image_attention_mask = np.ones((batch_size, image_token_length), dtype=np.int64)
-        task_prefix_embeds = inputs_embeds
-        task_prefix_attention_mask = np.ones((batch_size, task_prefix_embeds.shape[1]), dtype=np.int64)
+        # Build encoder input
+        B, T_img = image_features.shape[:-1]
+        img_mask = np.ones((B, T_img), dtype=np.int64)
+        task_prefix_embeds = text_embeds
+        task_mask = np.ones((B, task_prefix_embeds.shape[1]), dtype=np.int64)
+        if task_mask.ndim == 3:
+            task_mask = task_mask[:, 0]
 
-        if task_prefix_attention_mask.ndim == 3:
-            task_prefix_attention_mask = task_prefix_attention_mask[:, 0]
+        inputs_embeds = np.concatenate([image_features, text_embeds], axis=1)
+        attention_mask = np.concatenate([img_mask, task_mask], axis=1)
 
-        inputs_embeds = np.concatenate([image_features, task_prefix_embeds], axis=1)
-        attention_mask = np.concatenate([image_attention_mask, task_prefix_attention_mask], axis=1)
-
+        # Encoder
         encoder_hidden_states = self.encoder.run(
             None,
-            {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask}
+            {
+                "inputs_embeds": inputs_embeds,
+                "attention_mask": attention_mask,
+            },
         )[0]
 
+        # Decoder prefill
+        # bos_id = self.processor.tokenizer.bos_token_id
+        # bos_embed = self.text_embed.run(
+        #     None,
+        #     {"input_ids": np.array([[bos_id]], dtype=np.int64)}
+        # )[0]
+        next_token = self.processor.tokenizer.bos_token_id
+        next_input_embeds = self.text_embed.run(None, {
+            "input_ids": np.array([[next_token]], dtype=np.int64)
+        })[0]
         decoder_outs = self.decoder_prefill.run(
             None,
             {
-                "inputs_embeds": inputs_embeds[:, -1:],
+                "inputs_embeds": next_input_embeds,
                 "encoder_hidden_states": encoder_hidden_states,
-                "encoder_attention_mask": attention_mask
-            }
+                "encoder_attention_mask": attention_mask,
+            },
         )
-        encoder_kv = decoder_outs[1:]
 
+        encoder_kv = decoder_outs[1:]
         generated_tokens = []
+
+        # Decode loop
         while len(generated_tokens) < max_new_tokens:
             logits = decoder_outs[0]
             decoder_kv = decoder_outs[1:]
 
-            next_token_logits = logits[:, -1, :]
-            #probs = softmax(next_token_logits)
-            next_token = np.argmax(next_token_logits, axis=-1)[0]
+            next_token = int(np.argmax(logits[:, -1, :], axis=-1)[0])
             generated_tokens.append(next_token)
 
-            # Break if the EOS token (assumed to be token id 2) is generated.
-            if next_token == 2:
+            if next_token == 2:  # </s>
                 break
 
-            next_input_embeds = self.text_embed.run(
+            next_embed = self.text_embed.run(
                 None,
-                {"input_ids": np.array([[next_token]], dtype=np.int64)}
+                {"input_ids": np.array([[next_token]], dtype=np.int64)},
             )[0]
 
             decoder_outs = self.decoder_decode.run(
                 None,
                 {
                     "use_cache_branch": np.array([True], dtype=np.bool_),
-                    "inputs_embeds": next_input_embeds,
+                    "inputs_embeds": next_embed,
                     "encoder_hidden_states": encoder_hidden_states,
                     "encoder_attention_mask": attention_mask,
-                    "past_key_values.0.decoder.key": decoder_kv[0],
-                    "past_key_values.0.decoder.value": decoder_kv[1],
-                    "past_key_values.0.encoder.key": encoder_kv[2],
-                    "past_key_values.0.encoder.value": encoder_kv[3],
-                    "past_key_values.1.decoder.key": decoder_kv[4],
-                    "past_key_values.1.decoder.value": decoder_kv[5],
-                    "past_key_values.1.encoder.key": encoder_kv[6],
-                    "past_key_values.1.encoder.value": encoder_kv[7],
-                    "past_key_values.2.decoder.key": decoder_kv[8],
-                    "past_key_values.2.decoder.value": decoder_kv[9],
-                    "past_key_values.2.encoder.key": encoder_kv[10],
-                    "past_key_values.2.encoder.value": encoder_kv[11],
-                    "past_key_values.3.decoder.key": decoder_kv[12],
-                    "past_key_values.3.decoder.value": decoder_kv[13],
-                    "past_key_values.3.encoder.key": encoder_kv[14],
-                    "past_key_values.3.encoder.value": encoder_kv[15],
-                    "past_key_values.4.decoder.key": decoder_kv[16],
-                    "past_key_values.4.decoder.value": decoder_kv[17],
-                    "past_key_values.4.encoder.key": encoder_kv[18],
-                    "past_key_values.4.encoder.value": encoder_kv[19],
-                    "past_key_values.5.decoder.key": decoder_kv[20],
-                    "past_key_values.5.decoder.value": decoder_kv[21],
-                    "past_key_values.5.encoder.key": encoder_kv[22],
-                    "past_key_values.5.encoder.value": encoder_kv[23],
-                }
+                    **{f"past_key_values.{i}.decoder.key": decoder_kv[i * 4]
+                       for i in range(6)},
+                    **{f"past_key_values.{i}.decoder.value": decoder_kv[i * 4 + 1]
+                       for i in range(6)},
+                    **{f"past_key_values.{i}.encoder.key": encoder_kv[i * 4 + 2]
+                       for i in range(6)},
+                    **{f"past_key_values.{i}.encoder.value": encoder_kv[i * 4 + 3]
+                       for i in range(6)},
+                },
             )
 
-        # ==========================================
-        end_time = time.time()
-        total_time = end_time - start_time
-        
-        # ======== CPU USAGE END MEASURE ========
-        # rss_after = process.memory_info().rss
-        # peak_memory = rss_after - rss_before  # bytes
-        # ==========================================
+        total_time = time.time() - start_time
 
-        #print("GENERATED TOKENS:", generated_tokens[:80])
-        generated_text = self.processor.batch_decode(
+        text = self.processor.batch_decode(
             [generated_tokens], skip_special_tokens=False
         )[0]
-        #print("GENERATED TEXT:", repr(generated_text))
 
-        parsed_answer = self.processor.post_process_generation(
-            generated_text, 
-            task="<CAPTION_TO_PHRASE_GROUNDING>", 
-            image_size=(image.width*2, image.height*2)
+        parsed = self.processor.post_process_generation(
+            text,
+            task=task,
+            image_size=(image.width, image.height),
         )
-        return parsed_answer, total_time
 
+        return parsed, total_time
+
+    # ------------------------------------------------------------------
+    # High-level API
+    # ------------------------------------------------------------------
     def infer_from_image(
         self,
-        image,
-        prompt: str = "<MORE_DETAILED_CAPTION>",
-        expr: str = "",
-        max_new_tokens: int = 128
-    ) -> (list, str, float):
+        image: Image.Image,
+        task: str,
+        expr: Optional[str] = None,
+        max_new_tokens: int = 128,
+    ):
+        parsed, infer_time = self.generate(
+            image=image,
+            task=task,
+            expr=expr,
+            max_new_tokens=max_new_tokens,
+        )
 
-        parsed_answer, inference_time = self.generate_caption(image, prompt, expr, max_new_tokens)
-        
-        task_key = list(parsed_answer.keys())[0]  # ví dụ "<CAPTION_TO_PHRASE_GROUNDING>"
-        result = parsed_answer[task_key]
+        task_key = list(parsed.keys())[0]
+        result = parsed[task_key]
 
-        bboxes = result.get("bboxes", [])
-        labels = result.get("labels", [])
+        # ------------------------------------------------
+        # CASE 1: Text-only task (caption, OCR, etc.)
+        # ------------------------------------------------
+        if isinstance(result, str):
+            return result, infer_time
 
-        if len(bboxes) == 0:
-            return None, None, inference_time
+        # ------------------------------------------------
+        # CASE 2: Structured output (grounding, OD, ...)
+        # ------------------------------------------------
+        if isinstance(result, dict):
+            bboxes = result.get("bboxes", [])
+            labels = result.get("labels", [])
 
-        bbox = bboxes[0]
-        label = labels[0] if len(labels) > 0 else None
+            if not bboxes:
+                return None, None, infer_time
 
-        # print(f"Inference Time: {inference_time:.4f} seconds")
-        # print("Bbox:", bbox)
-        # print("Label:", label)
-        # print(f"Peak RAM usage: {peak_mem / 1024 / 1024:.2f} MB")
+            bbox = bboxes[0]
+            label = labels[0] if labels else None
+            return bbox, label, infer_time
 
-        return bbox, label, inference_time
+        # ------------------------------------------------
+        # Fallback (should not happen)
+        # ------------------------------------------------
+        return None, infer_time
+
+
 
 def compute_iou(boxA, boxB):
     """Bbox and ground truth format: [x1, y1, x2, y2]"""
@@ -310,7 +380,7 @@ def evaluate_dataset(model, dataset, n_samples=None):
                 # inference
                 bbox, label, infer_time = model.infer_from_image(
                     image=img, 
-                    prompt="<CAPTION_TO_PHRASE_GROUNDING>",
+                    task="<CAPTION_TO_PHRASE_GROUNDING>",
                     expr=expr,
                     max_new_tokens=256
                     )
@@ -367,16 +437,17 @@ if __name__ == '__main__':
         warmup_iterations=3
     )
 
-    # img_url = "https://www.datocms-assets.com/53444/1687431221-testing-the-saturn-v-rocket.jpg?auto=format&w=1200"
-    # expr = "A space rocket"
+    image = Image.open("spaceshuttle.jpg")
+    expr = "The space rocket in the center"
 
-    # response = requests.get(img_url, stream=True)
+    #response = requests.get(img_url, stream=True)
 
     # image = Image.open("car.jpg")
     # expr = "car"
-    # model.infer_from_image(image, prompt="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=32)
+    result, label, time = model.infer_from_image(image, task="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=128)
+    print("Answer:", result , label)
+    print(f"Inference time: {time:.4f} seconds")
+    # dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
+    # COCO_IMG_ROOT = "~/coco/val2014"
 
-    dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
-    #COCO_IMG_ROOT = "~/coco/val2014"
-
-    evaluate_dataset(model, dataset, n_samples= 100)
+    # evaluate_dataset(model, dataset, n_samples= None)
