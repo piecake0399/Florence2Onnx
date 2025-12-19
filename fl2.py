@@ -1,3 +1,5 @@
+# !pip install --upgrade onnxruntime==1.20.1 transformers==4.48.3 pillow==9.5.0 datasets==2.13.1 psutil==5.9.5 tqdm==4.66.1 matplotlib==3.8.0
+
 import os
 import time
 from typing import List
@@ -254,7 +256,7 @@ class Florence2OnnxModel:
         parsed = self.processor.post_process_generation(
             text,
             task=task,
-            image_size=(image.width, image.height),
+            image_size=(image.width*2, image.height*2),
         )
 
         return parsed, total_time
@@ -437,17 +439,21 @@ if __name__ == '__main__':
         warmup_iterations=3
     )
 
-    image = Image.open("spaceshuttle.jpg")
-    expr = "The space rocket in the center"
+    # image = Image.open("spaceshuttle.jpg")
+    # expr = "The space rocket in the center"
 
     #response = requests.get(img_url, stream=True)
 
     # image = Image.open("car.jpg")
     # expr = "car"
-    result, label, time = model.infer_from_image(image, task="<CAPTION_TO_PHRASE_GROUNDING>", expr=expr, max_new_tokens=128)
-    print("Answer:", result , label)
-    print(f"Inference time: {time:.4f} seconds")
-    # dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
-    # COCO_IMG_ROOT = "~/coco/val2014"
+    # result, time = model.infer_from_image(image, task="<CAPTION>", expr=None, max_new_tokens=128)
+    # print("Answer:", result)
+    # print(f"Inference time: {time:.4f} seconds")
+    
+    dataset = load_dataset("jxu124/refcoco-benchmark", split="refcoco_unc_val")
+    evaluate_dataset(model, dataset, n_samples= None)
 
-    # evaluate_dataset(model, dataset, n_samples= None)
+
+
+# TURNS OUT IT WAS JUST ONNXRUNTIME ERROR, NOT PIPELINE PROBLEM
+# EUREKA!!!!!!!!!!
