@@ -11,8 +11,9 @@ ONNX deployment for Florence 2
 
    For example: vision_encoder_q4f16.onnx, embed_tokens_q4f16.onnx, encoder_model_q4f16.onnx, decoder_model_q4f16.onnx, decoder_model_merged_q4.onnx
 
-4. Run the following command ``` python fl2.py ``` for <CAPTION_TO_PHRASE_GROUNDING> benchmark on RefCOCO 2014 dataset
-   4.1. Run ``` python fl2_caption.py ``` for <CAPTION> benchmark on MSCOCO 2014 Captioning dataset
+3. Run the following command ``` python fl2.py ``` for <CAPTION_TO_PHRASE_GROUNDING> benchmark on RefCOCO 2014 dataset
+
+   3.1. Run ``` python fl2_caption.py ``` for <CAPTION> benchmark on MSCOCO 2014 Captioning dataset
 
 
 ---------
