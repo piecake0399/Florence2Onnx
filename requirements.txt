@@ -1,4 +1,4 @@
-﻿onnxruntime-gpu
+onnxruntime==1.20.0
 transformers
 pillow
 psutil
@@ -8,3 +8,4 @@ datasets
 tqdm
 requests
 matplotlib
+ntk
