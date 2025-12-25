@@ -309,12 +309,12 @@ class Florence2OnnxModel:
         return None, infer_time
 
 
-def evaluate_mscoco_captioning_bleu4(
+def evaluate_dataset(
     model,
     dataset,
     n_samples=None,
     max_new_tokens=64,
-    verbose=False
+    verbose=True
 ):
     """
     Benchmark MS COCO Captioning using BLEU-4
@@ -329,7 +329,9 @@ def evaluate_mscoco_captioning_bleu4(
 
     smoother = SmoothingFunction().method4
     process = psutil.Process()
-    rss_before = process.memory_info().rss
+    
+    rss_baseline = process.memory_info().rss
+    peak_rss = rss_baseline
 
     processed = 0
 
@@ -352,6 +354,9 @@ def evaluate_mscoco_captioning_bleu4(
         )
 
         infer_times.append(infer_time)
+
+        cur_rss = process.memory_info().rss
+        peak_rss = max(peak_rss, cur_rss)
 
         if caption is None or len(caption.strip()) == 0:
             bleu4_scores.append(0.0)
@@ -379,8 +384,8 @@ def evaluate_mscoco_captioning_bleu4(
             print("========================")
 
     # --- Memory ---
-    rss_after = process.memory_info().rss
-    total_mem_used_mb = (rss_after - rss_before) / 1024 / 1024
+    peak_mem_used_mb = (peak_rss - rss_baseline) / 1024 / 1024
+    total_mem_used_mb = max(0.0, peak_mem_used_mb)
 
     # --- Report ---
     print("\n------- Evaluation Results (MS COCO Captioning) -------")
@@ -420,10 +425,5 @@ if __name__ == '__main__':
     # print("Answer:", result)
     # print(f"Inference time: {time:.4f} seconds")
     
-    dataset = load_dataset("patomp/thai-mscoco-2014-captions", split="validation")
+    dataset = load_dataset("patomp/thai-mscoco-2014-captions", split="validation", streaming=True)
     evaluate_dataset(model, dataset, n_samples= None)
-
-
-
-# TURNS OUT IT WAS JUST ONNXRUNTIME ERROR, NOT PIPELINE PROBLEM
-# EUREKA!!!!!!!!!!
